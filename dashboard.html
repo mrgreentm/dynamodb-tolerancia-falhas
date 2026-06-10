@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pedidos — DynamoDB Global Tables</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --md-sys-color-primary:          #1a73e8;
+      --md-sys-color-on-primary:       #fff;
+      --md-sys-color-surface:          #fff;
+      --md-sys-color-surface-variant:  #f8f9fa;
+      --md-sys-color-on-surface:       #1c1b1f;
+      --md-sys-color-on-surface-var:   #49454f;
+      --md-sys-color-outline:          #e0e0e0;
+      --md-sys-color-outline-variant:  #f1f3f4;
+      --md-sys-color-success:          #1e8e3e;
+      --md-sys-color-warning:          #f9ab00;
+      --md-sys-color-error:            #d93025;
+      --md-sys-color-shadow:           rgba(0,0,0,.12);
+      --mono: 'JetBrains Mono', monospace;
+      --elevation-1: 0 1px 3px rgba(0,0,0,.1), 0 1px 2px rgba(0,0,0,.06);
+      --elevation-2: 0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.06);
+      --elevation-3: 0 10px 15px rgba(0,0,0,.1), 0 4px 6px rgba(0,0,0,.05);
+    }
+
+    body {
+      background: #f0f4f8;
+      color: var(--md-sys-color-on-surface);
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── App shell ── */
+    .app { display: flex; flex-direction: column; min-height: 100vh; }
+
+    /* ── Top app bar ── */
+    .topbar {
+      background: var(--md-sys-color-surface);
+      border-bottom: 1px solid var(--md-sys-color-outline);
+      padding: 0 24px;
+      height: 64px;
+      display: flex; align-items: center; justify-content: space-between;
+      box-shadow: var(--elevation-1);
+      position: sticky; top: 0; z-index: 20;
+    }
+    .topbar-left { display: flex; align-items: center; gap: 12px; }
+    .topbar-icon { color: var(--md-sys-color-primary); font-size: 28px; }
+    .topbar-title { font-size: 20px; font-weight: 600; letter-spacing: -.02em; }
+    .topbar-sub { font-size: 12px; color: var(--md-sys-color-on-surface-var); margin-top: 1px; }
+    .topbar-right { display: flex; align-items: center; gap: 16px; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 20px;
+      font-size: 12px; font-weight: 500;
+      border: 1px solid var(--md-sys-color-outline);
+      background: var(--md-sys-color-surface);
+    }
+    .chip-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .chip-dot.ok      { background: var(--md-sys-color-success); }
+    .chip-dot.warn    { background: var(--md-sys-color-warning); animation: blink .8s step-end infinite; }
+    .chip-dot.err     { background: var(--md-sys-color-error); animation: blink .8s step-end infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    #clock { font-family: var(--mono); font-size: 13px; color: var(--md-sys-color-on-surface-var); }
+
+    /* ── Banner snackbar ── */
+    #banner {
+      display: none;
+      margin: 16px 24px 0;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      align-items: center; gap: 10px;
+      box-shadow: var(--elevation-2);
+    }
+    #banner.visible { display: flex; }
+    #banner.info  { background: #e8f0fe; border-left: 4px solid var(--md-sys-color-primary); color: #174ea6; }
+    #banner.warn  { background: #fef9e7; border-left: 4px solid var(--md-sys-color-warning); color: #7a4f00; }
+    #banner.err   { background: #fce8e6; border-left: 4px solid var(--md-sys-color-error);   color: #7b1c1c; }
+    #banner .banner-icon { font-size: 20px; flex-shrink: 0; }
+    #banner .banner-msg  { flex: 1; }
+    .banner-close {
+      background: none; border: none; cursor: pointer;
+      font-size: 18px; color: inherit; padding: 2px; border-radius: 4px; opacity: .7;
+    }
+    .banner-close:hover { opacity: 1; background: rgba(0,0,0,.06); }
+
+    /* ── Content ── */
+    .content { padding: 20px 24px; display: flex; flex-direction: column; gap: 20px; flex: 1; }
+
+    /* ── Region cards ── */
+    .region-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+    .region-card {
+      background: var(--md-sys-color-surface);
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: var(--elevation-1);
+      border-top: 3px solid transparent;
+      position: relative;
+      overflow: hidden;
+      transition: box-shadow .2s;
+    }
+    .region-card:hover { box-shadow: var(--elevation-2); }
+    .region-card.active   { border-top-color: var(--md-sys-color-success); }
+    .region-card.degraded { border-top-color: var(--md-sys-color-warning); }
+    .region-card.failed   { border-top-color: var(--md-sys-color-error); }
+
+    .region-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+    .region-flag { font-size: 28px; }
+    .region-name { font-size: 15px; font-weight: 600; font-family: var(--mono); }
+    .region-desc { font-size: 12px; color: var(--md-sys-color-on-surface-var); margin-top: 2px; }
+
+    .status-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 20px;
+      font-size: 11px; font-weight: 600; letter-spacing: .03em;
+    }
+    .status-chip.active   { background: #e6f4ea; color: var(--md-sys-color-success); }
+    .status-chip.degraded { background: #fef9e7; color: #b06000; }
+    .status-chip.failed   { background: #fce8e6; color: var(--md-sys-color-error); }
+
+    .region-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .metric-cell { background: var(--md-sys-color-surface-variant); border-radius: 8px; padding: 10px 12px; }
+    .metric-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--md-sys-color-on-surface-var); margin-bottom: 4px; }
+    .metric-val   { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+    .metric-unit  { font-size: 11px; font-weight: 400; color: var(--md-sys-color-on-surface-var); }
+
+    /* ── Replication strip ── */
+    .replic-card {
+      background: var(--md-sys-color-surface);
+      border-radius: 12px;
+      padding: 16px 24px;
+      box-shadow: var(--elevation-1);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .replic-label-text { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--md-sys-color-on-surface-var); white-space: nowrap; }
+    .replic-flow { display: flex; align-items: center; gap: 6px; flex: 1; justify-content: center; }
+    .replic-node {
+      padding: 6px 14px; border-radius: 20px;
+      font-size: 12px; font-weight: 600; font-family: var(--mono);
+      background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary);
+      white-space: nowrap;
+    }
+    .replic-node.replica { background: var(--md-sys-color-surface-variant); color: var(--md-sys-color-on-surface); border: 1px solid var(--md-sys-color-outline); }
+    .replic-node.offline { background: #fce8e6; color: var(--md-sys-color-error); border: 1px solid #f5c6c2; text-decoration: line-through; }
+    .replic-seg { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .replic-line { display: flex; align-items: center; gap: 4px; color: var(--md-sys-color-success); font-size: 18px; }
+    .replic-line.slow { color: var(--md-sys-color-warning); }
+    .replic-line.dead { color: var(--md-sys-color-error); }
+    .replic-ms { font-size: 10px; font-family: var(--mono); color: var(--md-sys-color-on-surface-var); }
+
+    /* ── Main card (table) ── */
+    .main-card {
+      background: var(--md-sys-color-surface);
+      border-radius: 12px;
+      box-shadow: var(--elevation-1);
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid var(--md-sys-color-outline);
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    .card-title { font-size: 16px; font-weight: 600; }
+    .card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 16px; border-radius: 20px;
+      font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500;
+      cursor: pointer; border: none; transition: background .15s, box-shadow .15s;
+      white-space: nowrap;
+    }
+    .btn .material-icons-round { font-size: 16px; }
+    .btn-filled  { background: var(--md-sys-color-primary); color: #fff; }
+    .btn-filled:hover { background: #1557b0; box-shadow: var(--elevation-2); }
+    .btn-tonal   { background: #e8f0fe; color: var(--md-sys-color-primary); }
+    .btn-tonal:hover { background: #d2e3fc; }
+    .btn-outlined { background: transparent; color: var(--md-sys-color-on-surface); border: 1px solid var(--md-sys-color-outline); }
+    .btn-outlined:hover { background: var(--md-sys-color-outline-variant); }
+    .btn-text    { background: transparent; color: var(--md-sys-color-primary); }
+    .btn-text:hover { background: #e8f0fe; }
+    .btn-danger  { background: #fce8e6; color: var(--md-sys-color-error); }
+    .btn-danger:hover { background: #f5c6c2; }
+    .btn-success { background: #e6f4ea; color: var(--md-sys-color-success); }
+    .btn-success:hover { background: #ceead6; }
+    .btn:disabled { opacity: .45; cursor: default; pointer-events: none; }
+    .btn-icon { padding: 6px; border-radius: 50%; }
+
+    /* ── Scenario tabs ── */
+    .scenario-strip {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--md-sys-color-outline);
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+      background: var(--md-sys-color-surface-variant);
+    }
+    .scenario-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--md-sys-color-on-surface-var); }
+
+    /* ── Table ── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    thead tr { border-bottom: 2px solid var(--md-sys-color-outline); }
+    th {
+      padding: 10px 16px; text-align: left;
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .07em; color: var(--md-sys-color-on-surface-var);
+      white-space: nowrap; background: var(--md-sys-color-surface);
+    }
+    tbody tr { border-bottom: 1px solid var(--md-sys-color-outline-variant); transition: background .1s; }
+    tbody tr:hover { background: var(--md-sys-color-surface-variant); }
+    td { padding: 10px 16px; font-size: 13px; }
+    td.mono { font-family: var(--mono); font-size: 11px; color: var(--md-sys-color-on-surface-var); }
+
+    /* Status pill */
+    .pill {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 20px;
+      font-size: 11px; font-weight: 600; letter-spacing: .03em;
+    }
+    .pill-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .pill.pendente    { background: #e8f0fe; color: #174ea6; }
+    .pill.pendente .pill-dot { background: #174ea6; }
+    .pill.processando { background: #fef9e7; color: #7a4f00; }
+    .pill.processando .pill-dot { background: #f9ab00; animation: blink .8s step-end infinite; }
+    .pill.enviado     { background: #e6f4ea; color: var(--md-sys-color-success); }
+    .pill.enviado .pill-dot { background: var(--md-sys-color-success); }
+    .pill.entregue    { background: #f1f3f4; color: var(--md-sys-color-on-surface-var); }
+    .pill.entregue .pill-dot { background: #80868b; }
+    .pill.throttled   { background: #fef9e7; color: #b06000; border: 1px dashed #f9ab00; }
+    .pill.throttled .pill-dot { background: var(--md-sys-color-warning); animation: blink .6s step-end infinite; }
+    .pill.falha       { background: #fce8e6; color: var(--md-sys-color-error); }
+    .pill.falha .pill-dot { background: var(--md-sys-color-error); }
+    .pill.conflito    { background: #f3e8fd; color: #6b3fa0; border: 1px dashed #9c5dcc; }
+    .pill.conflito .pill-dot { background: #9c5dcc; animation: blink .4s step-end infinite; }
+
+    .row-new { animation: rowfade .6s ease-out; }
+    @keyframes rowfade { from { background: #e8f0fe; } to {} }
+    .row-conflict { background: #fdf6ff; }
+
+    /* Delete btn in table */
+    .btn-row-del {
+      background: none; border: none; cursor: pointer;
+      color: var(--md-sys-color-on-surface-var); padding: 4px; border-radius: 50%;
+      display: inline-flex; align-items: center; transition: background .15s, color .15s;
+    }
+    .btn-row-del:hover { background: #fce8e6; color: var(--md-sys-color-error); }
+    .btn-row-del .material-icons-round { font-size: 17px; }
+
+    /* ── Drawer: novo pedido ── */
+    #drawer-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 50;
+    }
+    #drawer-overlay.open { display: block; }
+    #drawer {
+      position: fixed; right: 0; top: 0; bottom: 0; width: 380px;
+      background: var(--md-sys-color-surface);
+      box-shadow: var(--elevation-3);
+      transform: translateX(100%); transition: transform .25s cubic-bezier(.4,0,.2,1);
+      z-index: 51; display: flex; flex-direction: column;
+    }
+    #drawer.open { transform: translateX(0); }
+    .drawer-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--md-sys-color-outline);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .drawer-title { font-size: 18px; font-weight: 600; }
+    .drawer-body { padding: 24px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
+    .drawer-footer { padding: 16px 24px; border-top: 1px solid var(--md-sys-color-outline); display: flex; gap: 10px; justify-content: flex-end; }
+
+    /* Material-style text field */
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { font-size: 12px; font-weight: 600; color: var(--md-sys-color-on-surface-var); }
+    .field input, .field select {
+      padding: 10px 14px; border-radius: 8px;
+      border: 1px solid var(--md-sys-color-outline);
+      font-family: 'Inter', sans-serif; font-size: 14px;
+      color: var(--md-sys-color-on-surface);
+      background: var(--md-sys-color-surface-variant);
+      outline: none; transition: border-color .15s, box-shadow .15s;
+    }
+    .field input:focus, .field select:focus {
+      border-color: var(--md-sys-color-primary);
+      box-shadow: 0 0 0 3px rgba(26,115,232,.15);
+      background: #fff;
+    }
+
+    /* ── Log sidebar ── */
+    .bottom-row { display: grid; grid-template-columns: 1fr 340px; gap: 20px; }
+
+    .log-card {
+      background: var(--md-sys-color-surface);
+      border-radius: 12px; box-shadow: var(--elevation-1);
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    .log-header {
+      padding: 14px 20px; border-bottom: 1px solid var(--md-sys-color-outline);
+      font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px;
+    }
+    #event-log { max-height: 240px; overflow-y: auto; }
+    .log-entry {
+      padding: 8px 20px; font-size: 12px; display: flex; gap: 10px; align-items: flex-start;
+      border-bottom: 1px solid var(--md-sys-color-outline-variant);
+    }
+    .log-entry.ok   .log-icon { color: var(--md-sys-color-success); }
+    .log-entry.warn .log-icon { color: var(--md-sys-color-warning); }
+    .log-entry.err  .log-icon { color: var(--md-sys-color-error); }
+    .log-icon { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
+    .log-time { font-family: var(--mono); font-size: 10px; color: var(--md-sys-color-on-surface-var); flex-shrink: 0; margin-top: 2px; }
+    .log-msg  { color: var(--md-sys-color-on-surface); flex: 1; }
+
+    /* ── PITR card ── */
+    .pitr-card {
+      background: var(--md-sys-color-surface);
+      border-radius: 12px; box-shadow: var(--elevation-1);
+      overflow: hidden;
+    }
+    .pitr-header {
+      padding: 14px 20px; border-bottom: 1px solid var(--md-sys-color-outline);
+      font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px;
+    }
+    .pitr-row {
+      padding: 12px 20px; border-bottom: 1px solid var(--md-sys-color-outline-variant);
+      display: flex; justify-content: space-between; align-items: center; font-size: 13px;
+    }
+    .pitr-row:last-child { border-bottom: none; }
+    .pitr-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600;
+    }
+    .pitr-badge.on  { background: #e6f4ea; color: var(--md-sys-color-success); }
+    .pitr-badge.off { background: #fce8e6; color: var(--md-sys-color-error); }
+
+    /* ── Conflict dialog ── */
+    #conflict-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,.5); z-index: 100;
+      align-items: center; justify-content: center;
+    }
+    #conflict-overlay.open { display: flex; }
+    .dialog {
+      background: var(--md-sys-color-surface);
+      border-radius: 16px; width: 580px; max-width: 95vw;
+      box-shadow: var(--elevation-3); overflow: hidden;
+    }
+    .dialog-header { padding: 20px 24px 0; }
+    .dialog-icon { font-size: 36px; color: #9c5dcc; margin-bottom: 8px; }
+    .dialog-title { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+    .dialog-sub { font-size: 13px; color: var(--md-sys-color-on-surface-var); }
+    .dialog-body { padding: 20px 24px; }
+    .conflict-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+    .conflict-ver {
+      border: 1px solid var(--md-sys-color-outline);
+      border-radius: 10px; padding: 14px;
+    }
+    .conflict-ver.winner {
+      border: 2px solid var(--md-sys-color-primary);
+      background: #f8fbff;
+    }
+    .conflict-ver h3 {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: var(--md-sys-color-on-surface-var); margin-bottom: 10px;
+    }
+    .conflict-ver.winner h3 { color: var(--md-sys-color-primary); }
+    .conflict-field { font-size: 13px; margin-bottom: 6px; }
+    .conflict-field span { font-weight: 600; }
+    .winner-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: #e8f0fe; color: var(--md-sys-color-primary);
+      padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;
+      margin-top: 6px;
+    }
+    .dialog-note {
+      font-size: 12px; color: var(--md-sys-color-on-surface-var);
+      background: var(--md-sys-color-surface-variant);
+      border-radius: 8px; padding: 10px 12px; line-height: 1.6;
+    }
+    .dialog-footer {
+      padding: 12px 24px 20px;
+      display: flex; justify-content: flex-end; gap: 10px;
+    }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-thumb { background: var(--md-sys-color-outline); border-radius: 3px; }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Top bar ── -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="material-icons-round topbar-icon">storage</span>
+      <div>
+        <div class="topbar-title">Pedidos</div>
+        <div class="topbar-sub">DynamoDB Global Tables · USENIX ATC 2022</div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="chip" id="global-chip">
+        <span class="chip-dot ok" id="global-dot"></span>
+        <span id="global-text">Operacional</span>
+      </div>
+      <span id="clock">--:--:--</span>
+    </div>
+  </header>
+
+  <!-- ── Banner ── -->
+  <div id="banner">
+    <span class="material-icons-round banner-icon" id="banner-icon">info</span>
+    <span class="banner-msg" id="banner-msg"></span>
+    <button class="banner-close" onclick="closeBanner()">✕</button>
+  </div>
+
+  <div class="content">
+
+    <!-- ── Region cards ── -->
+    <div class="region-grid" id="region-grid"></div>
+
+    <!-- ── Replication strip ── -->
+    <div class="replic-card">
+      <span class="material-icons-round" style="color:var(--md-sys-color-primary);font-size:20px">sync_alt</span>
+      <span class="replic-label-text">Replicação</span>
+      <div class="replic-flow" id="replic-flow"></div>
+    </div>
+
+    <!-- ── Orders table card ── -->
+    <div class="main-card">
+      <div class="card-header">
+        <div class="card-title">Tabela: Pedidos</div>
+        <div class="card-actions">
+          <button class="btn btn-outlined" id="btn-reload" onclick="carregarPedidos()">
+            <span class="material-icons-round">refresh</span> Atualizar
+          </button>
+          <button class="btn btn-filled" onclick="abrirDrawer()">
+            <span class="material-icons-round">add</span> Novo Pedido
+          </button>
+        </div>
+      </div>
+
+      <div class="scenario-strip">
+        <span class="scenario-label">Simular:</span>
+        <button class="btn btn-danger" id="btn-falha" onclick="cenarioFalha()">
+          <span class="material-icons-round">bolt</span> Falha de Região
+        </button>
+        <button class="btn btn-outlined" id="btn-throttle" onclick="cenarioThrottle()">
+          <span class="material-icons-round">local_fire_department</span> Throttling
+        </button>
+        <button class="btn btn-outlined" id="btn-conflito" onclick="cenarioConflito()">
+          <span class="material-icons-round">compare_arrows</span> Conflito de Escrita
+        </button>
+        <button class="btn btn-success" style="margin-left:auto" onclick="recuperar()">
+          <span class="material-icons-round">check_circle</span> Recuperar Sistema
+        </button>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Produto</th>
+              <th>Cliente</th>
+              <th>Valor</th>
+              <th>Status</th>
+              <th>Região</th>
+              <th>Criado em</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="orders-body">
+            <tr><td colspan="8" style="text-align:center;padding:32px;color:var(--md-sys-color-on-surface-var)">
+              <span class="material-icons-round" style="font-size:32px;display:block;margin-bottom:8px;opacity:.4">inventory_2</span>
+              Carregando pedidos…
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Bottom row ── -->
+    <div class="bottom-row">
+      <div class="log-card">
+        <div class="log-header">
+          <span class="material-icons-round" style="color:var(--md-sys-color-primary);font-size:18px">terminal</span>
+          Log de Eventos
+        </div>
+        <div id="event-log"></div>
+      </div>
+
+      <div class="pitr-card">
+        <div class="pitr-header">
+          <span class="material-icons-round" style="color:var(--md-sys-color-success);font-size:18px">backup</span>
+          Point-in-Time Recovery
+        </div>
+        <div id="pitr-list"></div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /app -->
+
+<!-- ── Drawer: novo pedido ── -->
+<div id="drawer-overlay" onclick="fecharDrawer()"></div>
+<div id="drawer">
+  <div class="drawer-header">
+    <span class="drawer-title">Novo Pedido</span>
+    <button class="btn btn-icon btn-text" onclick="fecharDrawer()">
+      <span class="material-icons-round">close</span>
+    </button>
+  </div>
+  <div class="drawer-body">
+    <div class="field">
+      <label>Produto</label>
+      <input id="f-produto" type="text" placeholder="Ex: Notebook Pro" />
+    </div>
+    <div class="field">
+      <label>Cliente</label>
+      <input id="f-cliente" type="text" placeholder="Ex: Ana Costa" />
+    </div>
+    <div class="field">
+      <label>Valor (R$)</label>
+      <input id="f-valor" type="number" min="0" step="0.01" placeholder="0.00" />
+    </div>
+    <div id="drawer-feedback" style="font-size:12px;color:var(--md-sys-color-on-surface-var);display:none"></div>
+  </div>
+  <div class="drawer-footer">
+    <button class="btn btn-outlined" onclick="fecharDrawer()">Cancelar</button>
+    <button class="btn btn-filled" onclick="salvarPedido()">
+      <span class="material-icons-round">save</span> Salvar
+    </button>
+  </div>
+</div>
+
+<!-- ── Conflict dialog ── -->
+<div id="conflict-overlay">
+  <div class="dialog">
+    <div class="dialog-header">
+      <div class="material-icons-round dialog-icon">compare_arrows</div>
+      <div class="dialog-title">Conflito de escrita detectado</div>
+      <div class="dialog-sub">Item: <strong id="conf-id"></strong> — escritas simultâneas em duas regiões</div>
+    </div>
+    <div class="dialog-body">
+      <div class="conflict-grid">
+        <div class="conflict-ver">
+          <h3>us-east-1 · versão A</h3>
+          <div class="conflict-field">Status: <span id="cv-us-s"></span></div>
+          <div class="conflict-field">Valor: R$ <span id="cv-us-v"></span></div>
+          <div class="conflict-field" style="font-size:11px;color:var(--md-sys-color-on-surface-var)">ts: <span id="cv-us-t"></span></div>
+        </div>
+        <div class="conflict-ver winner">
+          <h3>eu-west-1 · versão B</h3>
+          <div class="conflict-field">Status: <span id="cv-eu-s"></span></div>
+          <div class="conflict-field">Valor: R$ <span id="cv-eu-v"></span></div>
+          <div class="conflict-field" style="font-size:11px">ts: <span id="cv-eu-t"></span></div>
+          <div class="winner-badge"><span class="material-icons-round" style="font-size:13px">check</span> last-write-wins</div>
+        </div>
+      </div>
+      <div class="dialog-note">
+        O DynamoDB resolve conflitos com <strong>last-write-wins</strong> baseado no timestamp do servidor
+        (§3.4 — Elhemali et al., USENIX ATC 2022). A versão de eu-west-1, gravada ~100ms depois, prevalece
+        em todas as réplicas após convergência.
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button class="btn btn-outlined" onclick="fecharConflito(false)">Cancelar</button>
+      <button class="btn btn-filled" onclick="fecharConflito(true)">
+        <span class="material-icons-round">merge</span> Aplicar LWW
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = "http://localhost:8080";
+
+// ── Estado ────────────────────────────────────────────────────────────────────
+const REGIOES = ["sa-east-1","us-east-1","eu-west-1"];
+const FLAGS   = {"sa-east-1":"🇧🇷","us-east-1":"🇺🇸","eu-west-1":"🇮🇪"};
+const DESCS   = {"sa-east-1":"São Paulo · primária","us-east-1":"N. Virginia · réplica","eu-west-1":"Irlanda · réplica"};
+
+const state = {
+  regions: {
+    "sa-east-1": { status:"active", items:20, latency:0, repl:null, throttled:0, errors:0, pitr:true },
+    "us-east-1": { status:"active", items:20, latency:12, repl:180,  throttled:0, errors:0, pitr:true },
+    "eu-west-1": { status:"active", items:20, latency:11, repl:220,  throttled:0, errors:0, pitr:true },
+  },
+  scenario: null,
+  orders: [],
+  nextId: 21,
+};
+
+// ── Relógio ───────────────────────────────────────────────────────────────────
+setInterval(() => {
+  document.getElementById("clock").textContent =
+    new Date().toLocaleTimeString("pt-BR",{hour12:false});
+}, 1000);
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+function log(msg, tipo="ok") {
+  const icons = {ok:"check_circle", warn:"warning", err:"error"};
+  const el = document.getElementById("event-log");
+  const ts = new Date().toLocaleTimeString("pt-BR",{hour12:false});
+  const div = document.createElement("div");
+  div.className = "log-entry " + tipo;
+  div.innerHTML = `<span class="material-icons-round log-icon">${icons[tipo]||"info"}</span><span class="log-time">${ts}</span><span class="log-msg">${msg}</span>`;
+  el.prepend(div);
+  while (el.children.length > 60) el.removeChild(el.lastChild);
+}
+
+// ── Banner ────────────────────────────────────────────────────────────────────
+function showBanner(msg, tipo="info") {
+  const icons = {info:"info", warn:"warning", err:"error"};
+  document.getElementById("banner-icon").textContent = icons[tipo]||"info";
+  document.getElementById("banner-msg").textContent = msg;
+  const b = document.getElementById("banner");
+  b.className = ""; b.classList.add("visible", tipo);
+}
+function closeBanner() {
+  document.getElementById("banner").classList.remove("visible");
+}
+
+// ── Global chip ───────────────────────────────────────────────────────────────
+function updateGlobalChip() {
+  const dot  = document.getElementById("global-dot");
+  const text = document.getElementById("global-text");
+  const anyFailed   = REGIOES.some(r => state.regions[r].status === "failed");
+  const anyDegraded = REGIOES.some(r => state.regions[r].status === "degraded");
+  if (anyFailed)   { dot.className="chip-dot err";  text.textContent="Falha detectada"; }
+  else if (anyDegraded) { dot.className="chip-dot warn"; text.textContent="Degradado"; }
+  else             { dot.className="chip-dot ok";   text.textContent="Operacional"; }
+}
+
+// ── Region cards ──────────────────────────────────────────────────────────────
+function renderRegions() {
+  const grid = document.getElementById("region-grid");
+  grid.innerHTML = "";
+  REGIOES.forEach(r => {
+    const s = state.regions[r];
+    const lat = s.latency !== null ? s.latency + "<span style='font-size:11px;font-weight:400;color:var(--md-sys-color-on-surface-var)'>ms</span>" : "—";
+    const repl = (s.repl !== null && s.repl !== undefined) ? s.repl + "<span style='font-size:11px;font-weight:400;color:var(--md-sys-color-on-surface-var)'>ms</span>" : (r==="sa-east-1"?"—":"∞");
+    const statusLabel = s.status==="active"?"Ativa":s.status==="degraded"?"Degradada":"Falha";
+
+    grid.innerHTML += `
+      <div class="region-card ${s.status}">
+        <div class="region-card-header">
+          <div>
+            <div style="font-size:28px;margin-bottom:4px">${FLAGS[r]}</div>
+            <div class="region-name">${r}</div>
+            <div class="region-desc">${DESCS[r]}</div>
+          </div>
+          <span class="status-chip ${s.status}">
+            <span class="material-icons-round" style="font-size:12px">${s.status==="active"?"check_circle":s.status==="degraded"?"warning":"cancel"}</span>
+            ${statusLabel}
+          </span>
+        </div>
+        <div class="region-metrics">
+          <div class="metric-cell">
+            <div class="metric-label">Itens</div>
+            <div class="metric-val" style="color:var(--md-sys-color-primary)">${s.status==="failed"?"—":s.items}</div>
+          </div>
+          <div class="metric-cell">
+            <div class="metric-label">Latência API</div>
+            <div class="metric-val" style="color:${s.latency<20?"var(--md-sys-color-success)":s.latency<50?"var(--md-sys-color-warning)":"var(--md-sys-color-error)"}">${s.status==="failed"?"∞":lat}</div>
+          </div>
+          <div class="metric-cell">
+            <div class="metric-label">Replic. latência</div>
+            <div class="metric-val" style="color:${r==="sa-east-1"?"var(--md-sys-color-on-surface-var)":s.status==="failed"?"var(--md-sys-color-error)":"var(--md-sys-color-primary)"}">${repl}</div>
+          </div>
+          <div class="metric-cell">
+            <div class="metric-label">Erros</div>
+            <div class="metric-val" style="color:${s.errors===0?"var(--md-sys-color-success)":s.errors<5?"var(--md-sys-color-warning)":"var(--md-sys-color-error)"}">${s.errors}</div>
+          </div>
+        </div>
+      </div>`;
+  });
+}
+
+// ── Replication flow ──────────────────────────────────────────────────────────
+function renderReplic() {
+  const flow = document.getElementById("replic-flow");
+  flow.innerHTML = "";
+  const sa = state.regions["sa-east-1"];
+  const us = state.regions["us-east-1"];
+  const eu = state.regions["eu-west-1"];
+
+  const nodeClass = s => "replic-node" + (s.status==="failed"?" offline":s.status==="degraded"?" degraded":"");
+
+  const arrow = (s, ms) => {
+    const cls = s.status==="failed"?"dead":s.status==="degraded"?"slow":"";
+    const txt = s.status==="failed"?"offline":s.status==="degraded"?"lento…":`~${ms}ms`;
+    return `<div class="replic-seg">
+      <span class="replic-line ${cls}"><span class="material-icons-round" style="font-size:20px">arrow_forward</span></span>
+      <span class="replic-ms">${txt}</span>
+    </div>`;
+  };
+
+  flow.innerHTML = `
+    <span class="${nodeClass(sa)}">sa-east-1</span>
+    ${arrow(us, us.repl||180)}
+    <span class="${nodeClass(us)} replica">us-east-1</span>
+    ${arrow(eu, eu.repl||220)}
+    <span class="${nodeClass(eu)} replica">eu-west-1</span>`;
+}
+
+// ── PITR ──────────────────────────────────────────────────────────────────────
+function renderPitr() {
+  const el = document.getElementById("pitr-list");
+  el.innerHTML = REGIOES.map(r => {
+    const on = state.regions[r].pitr;
+    return `<div class="pitr-row">
+      <span>${FLAGS[r]} ${r}</span>
+      <span class="pitr-badge ${on?"on":"off"}">
+        <span class="material-icons-round" style="font-size:13px">${on?"verified_user":"shield"}</span>
+        ${on?"ATIVO":"INATIVO"}
+      </span>
+    </div>`;
+  }).join("");
+}
+
+// ── Tabela de pedidos ─────────────────────────────────────────────────────────
+function renderOrders(novoPedidoId = null) {
+  const tbody = document.getElementById("orders-body");
+  if (state.orders.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:32px;color:var(--md-sys-color-on-surface-var)">
+      <span class="material-icons-round" style="font-size:32px;display:block;margin-bottom:8px;opacity:.4">inbox</span>
+      Nenhum pedido encontrado
+    </td></tr>`;
+    return;
+  }
+  tbody.innerHTML = "";
+  [...state.orders].forEach(o => {
+    const tr = document.createElement("tr");
+    if (o.conflito) tr.className = "row-conflict";
+    if (o.pedido_id === novoPedidoId) tr.className += " row-new";
+
+    const statusCls = (o.status||"pendente").replace(/\s/g,"_").toLowerCase();
+    const regOffline = state.scenario==="falha" && o.origem_regiao==="eu-west-1";
+    const valor = typeof o.valor === "object" ? parseFloat(o.valor.$n || o.valor) : parseFloat(o.valor||0);
+    const ts = (o.criado_em||"").substring(11,19);
+
+    tr.innerHTML = `
+      <td class="mono">${(o.pedido_id||"").substring(0,8)}…</td>
+      <td>${o.produto||"—"}</td>
+      <td>${o.cliente||"—"}</td>
+      <td style="font-family:var(--mono)">R$ ${isNaN(valor)?"—":valor.toFixed(2)}</td>
+      <td><span class="pill ${statusCls}"><span class="pill-dot"></span>${o.status||"pendente"}</span></td>
+      <td style="font-family:var(--mono);font-size:12px;${regOffline?"text-decoration:line-through;opacity:.4":""}">${o.origem_regiao||"—"}</td>
+      <td class="mono">${ts}</td>
+      <td>
+        <button class="btn-row-del" title="Deletar" onclick="deletarPedido('${o.pedido_id}','${o.criado_em}')">
+          <span class="material-icons-round">delete_outline</span>
+        </button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+// ── API calls ─────────────────────────────────────────────────────────────────
+async function carregarPedidos() {
+  try {
+    const res = await fetch(`${API}/api/orders`);
+    if (!res.ok) throw new Error(res.statusText);
+    state.orders = await res.json();
+    REGIOES.forEach(r => state.regions[r].items = state.orders.filter(o => o.origem_regiao === r).length);
+    renderOrders();
+    renderRegions();
+    log("Pedidos sincronizados com DynamoDB sa-east-1", "ok");
+  } catch(e) {
+    // sem backend: usa dados mock
+    if (state.orders.length === 0) gerarMock();
+    renderOrders();
+    log("Backend offline — usando dados simulados", "warn");
+  }
+}
+
+async function salvarPedido() {
+  const produto = document.getElementById("f-produto").value.trim();
+  const cliente = document.getElementById("f-cliente").value.trim();
+  const valor   = document.getElementById("f-valor").value;
+  if (!produto || !cliente || !valor) {
+    document.getElementById("drawer-feedback").style.display = "block";
+    document.getElementById("drawer-feedback").textContent = "Preencha todos os campos.";
+    return;
+  }
+  try {
+    const res = await fetch(`${API}/api/orders`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({produto, cliente, valor: parseFloat(valor)}),
+    });
+    if (!res.ok) throw new Error();
+    const novo = await res.json();
+    state.orders.unshift(novo);
+    fecharDrawer();
+    renderOrders(novo.pedido_id);
+    renderRegions();
+    log(`PutItem OK — ${novo.pedido_id.substring(0,8)} gravado em sa-east-1`, "ok");
+  } catch {
+    // mock fallback
+    const mock = {
+      pedido_id: crypto.randomUUID(),
+      criado_em: new Date().toISOString(),
+      produto, cliente,
+      valor: parseFloat(valor),
+      status: "pendente",
+      origem_regiao: "sa-east-1",
+    };
+    state.orders.unshift(mock);
+    fecharDrawer();
+    renderOrders(mock.pedido_id);
+    log(`[MOCK] Pedido ${mock.pedido_id.substring(0,8)} criado localmente`, "warn");
+  }
+}
+
+async function deletarPedido(id, criado_em) {
+  try {
+    await fetch(`${API}/api/orders/${encodeURIComponent(id)}?criado_em=${encodeURIComponent(criado_em)}`, {method:"DELETE"});
+    state.orders = state.orders.filter(o => o.pedido_id !== id);
+    renderOrders();
+    renderRegions();
+    log(`DeleteItem OK — ${id.substring(0,8)} removido`, "ok");
+  } catch {
+    state.orders = state.orders.filter(o => o.pedido_id !== id);
+    renderOrders();
+    log(`[MOCK] Item ${id.substring(0,8)} removido localmente`, "warn");
+  }
+}
+
+async function carregarMetricas() {
+  try {
+    const res = await fetch(`${API}/api/metrics`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const m = await res.json();
+    let temDados = false;
+    REGIOES.forEach(r => {
+      if (!m[r]) return;
+      if (m[r].latency_ms !== null && m[r].latency_ms !== undefined) {
+        state.regions[r].latency = m[r].latency_ms;
+        temDados = true;
+      }
+      if (m[r].replication_latency_ms !== null && m[r].replication_latency_ms !== undefined) {
+        state.regions[r].repl = m[r].replication_latency_ms;
+      }
+      state.regions[r].throttled = m[r].throttled    || 0;
+      state.regions[r].errors    = (m[r].errors || 0) + (m[r].user_errors || 0);
+    });
+    renderRegions();
+    if (!temDados) log("CloudWatch: sem datapoints nos últimos 30min (tabela ociosa)", "warn");
+    else           log("CloudWatch métricas atualizadas", "ok");
+  } catch(e) {
+    log(`CloudWatch indisponível: ${e.message}`, "warn");
+  }
+}
+
+async function carregarStatus() {
+  try {
+    const res = await fetch(`${API}/api/status`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const s = await res.json();
+    REGIOES.forEach(r => {
+      if (!s[r]) return;
+      state.regions[r].items  = s[r].items  || 0;
+      state.regions[r].pitr   = s[r].pitr   ?? true;
+      if (!state.scenario) {
+        state.regions[r].status = (s[r].status === "ACTIVE") ? "active" : "degraded";
+      }
+    });
+    renderRegions();
+    renderPitr();
+    updateGlobalChip();
+  } catch(e) {
+    log(`Status da tabela indisponível: ${e.message}`, "warn");
+  }
+}
+
+// ── Mock data ─────────────────────────────────────────────────────────────────
+const PRODS = ["Notebook Pro","Teclado Mecânico","Mouse Sem Fio","Monitor 4K","Headset USB","Webcam HD","Hub USB-C","SSD 1TB","Memória 16GB","Placa de Vídeo"];
+const CLNTS = ["Ana Costa","Bruno Lima","Carla Souza","Diego Mendes","Eva Rocha","Felipe Neto","Gabi Alves","Hugo Dias","Iris Melo","João Pinto"];
+const STS   = ["pendente","processando","enviado","entregue"];
+
+function gerarMock() {
+  const base = Date.now() - 20 * 60000;
+  for (let i = 0; i < 20; i++) {
+    state.orders.push({
+      pedido_id: crypto.randomUUID(),
+      criado_em: new Date(base + i*60000).toISOString(),
+      produto:   PRODS[i % PRODS.length],
+      cliente:   CLNTS[i % CLNTS.length],
+      valor:     parseFloat((10 + i * 5.5).toFixed(2)),
+      status:    STS[i % 4],
+      origem_regiao: REGIOES[i % 3],
+    });
+  }
+}
+
+// ── Drawer ────────────────────────────────────────────────────────────────────
+function abrirDrawer() {
+  document.getElementById("f-produto").value = "";
+  document.getElementById("f-cliente").value = "";
+  document.getElementById("f-valor").value   = "";
+  document.getElementById("drawer-feedback").style.display = "none";
+  document.getElementById("drawer-overlay").classList.add("open");
+  document.getElementById("drawer").classList.add("open");
+  setTimeout(() => document.getElementById("f-produto").focus(), 280);
+}
+function fecharDrawer() {
+  document.getElementById("drawer-overlay").classList.remove("open");
+  document.getElementById("drawer").classList.remove("open");
+}
+
+// ── Cenários ──────────────────────────────────────────────────────────────────
+function setBtns(dis) {
+  ["btn-falha","btn-throttle","btn-conflito"].forEach(id =>
+    document.getElementById(id).disabled = dis
+  );
+}
+
+function cenarioFalha() {
+  if (state.scenario) return;
+  state.scenario = "falha";
+  setBtns(true);
+  state.regions["eu-west-1"].status = "failed";
+  state.regions["eu-west-1"].errors = 100;
+  renderRegions(); renderReplic(); updateGlobalChip();
+  showBanner("CENÁRIO A — Réplica eu-west-1 offline. Sistema continua operacional em sa-east-1 e us-east-1 (topologia ativa-ativa).", "err");
+  log("Réplica eu-west-1 removida — falha de região simulada", "err");
+  state.orders.filter(o => o.origem_regiao === "eu-west-1").forEach(o => { o._prev = o.status; o.status = "falha"; });
+  renderOrders();
+  setTimeout(() => { state.regions["eu-west-1"].status = "degraded"; renderRegions(); renderReplic(); log("eu-west-1 restaurando — recriando réplica…","warn"); }, 8000);
+  setTimeout(() => {
+    state.orders.filter(o => o.status === "falha").forEach(o => { o.status = o._prev || "enviado"; delete o._prev; });
+    state.regions["eu-west-1"].status = "active"; state.regions["eu-west-1"].errors = 0;
+    renderRegions(); renderReplic(); renderOrders(); updateGlobalChip(); closeBanner();
+    state.scenario = null; setBtns(false);
+    log("eu-west-1 ACTIVE — dados replicados após recovery","ok");
+  }, 16000);
+}
+
+function cenarioThrottle() {
+  if (state.scenario) return;
+  state.scenario = "throttle";
+  setBtns(true);
+  state.regions["sa-east-1"].status = "degraded";
+  renderRegions(); renderReplic(); updateGlobalChip();
+  showBanner("CENÁRIO B — Throttling em sa-east-1: ProvisionedThroughputExceededException. Escritas com exponential backoff (boto3 retry automático).", "warn");
+  log("Throttling ativo em sa-east-1 — 1 WCU provisioned","err");
+  let i = 0;
+  const iv = setInterval(() => {
+    if (i >= 6) { clearInterval(iv); return; }
+    const o = {
+      pedido_id: crypto.randomUUID(),
+      criado_em: new Date().toISOString(),
+      produto: PRODS[i % PRODS.length],
+      cliente: CLNTS[(i+3) % CLNTS.length],
+      valor: (50 + i*12).toFixed(2),
+      status: "throttled",
+      origem_regiao: "sa-east-1",
+    };
+    state.orders.unshift(o);
+    log(`PutItem throttled → ${o.pedido_id.substring(0,8)} (retry ${i+1}/6)`, "warn");
+    renderOrders(o.pedido_id);
+    i++;
+  }, 700);
+  setTimeout(() => {
+    state.orders.filter(o => o.status === "throttled").forEach(o => { o.status = "pendente"; });
+    state.regions["sa-east-1"].status = "active"; state.regions["sa-east-1"].errors = 0;
+    renderRegions(); renderReplic(); renderOrders(); updateGlobalChip(); closeBanner();
+    state.scenario = null; setBtns(false);
+    log("PAY_PER_REQUEST restaurado — fila liberada","ok");
+  }, 12000);
+}
+
+let conflictItem = null;
+function cenarioConflito() {
+  if (state.scenario) return;
+  state.scenario = "conflito";
+  setBtns(true);
+  const id = crypto.randomUUID();
+  const tsUs = new Date().toISOString();
+  conflictItem = {
+    pedido_id: id, criado_em: tsUs,
+    produto: "Notebook Pro", cliente: "Conflito Test",
+    valor: "499.00", status: "conflito", origem_regiao: "us/eu", conflito: true,
+  };
+  state.orders.unshift(conflictItem);
+  renderOrders(id);
+  showBanner(`CENÁRIO C — Conflito de escrita em ${id.substring(0,8)} — escritas simultâneas em us-east-1 e eu-west-1.`, "warn");
+  log(`Conflito detectado: ${id.substring(0,8)} gravado em us-east-1 e eu-west-1 simultaneamente`, "warn");
+  setTimeout(() => {
+    const tsEu = new Date().toISOString();
+    document.getElementById("conf-id").textContent = id.substring(0,8) + "…";
+    document.getElementById("cv-us-s").textContent = "processando";
+    document.getElementById("cv-us-v").textContent = "499.00";
+    document.getElementById("cv-us-t").textContent = tsUs.substring(11,23) + "Z";
+    document.getElementById("cv-eu-s").textContent = "enviado";
+    document.getElementById("cv-eu-v").textContent = "499.00";
+    document.getElementById("cv-eu-t").textContent = tsEu.substring(11,23) + "Z (+100ms)";
+    document.getElementById("conflict-overlay").classList.add("open");
+  }, 1200);
+}
+
+function fecharConflito(aplicar) {
+  document.getElementById("conflict-overlay").classList.remove("open");
+  if (aplicar && conflictItem) {
+    conflictItem.status = "enviado";
+    conflictItem.origem_regiao = "eu-west-1";
+    conflictItem.conflito = false;
+    log("LWW aplicado — versão eu-west-1 prevaleceu em todas as réplicas","ok");
+    log("Convergência atingida: item consistente nas 3 regiões","ok");
+  }
+  closeBanner(); state.scenario = null; setBtns(false);
+  renderOrders();
+}
+
+function recuperar() {
+  state.orders.forEach(o => {
+    if (["falha","throttled","conflito"].includes(o.status)) o.status = "pendente";
+    o.conflito = false;
+  });
+  REGIOES.forEach(r => { state.regions[r].status = "active"; state.regions[r].errors = 0; });
+  state.scenario = null; setBtns(false);
+  renderRegions(); renderReplic(); renderOrders(); updateGlobalChip(); closeBanner();
+  document.getElementById("conflict-overlay").classList.remove("open");
+  log("Sistema recuperado — todas as réplicas ACTIVE","ok");
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+renderRegions();
+renderReplic();
+renderPitr();
+carregarPedidos();
+carregarMetricas();
+carregarStatus();
+setInterval(carregarMetricas, 30000);
+setInterval(carregarStatus, 15000);
+log("Global Table 'Pedidos' ativa — sa-east-1 primária","ok");
+log("PITR habilitado em todas as réplicas","ok");
+log("CloudWatch métricas atualizando a cada 30s","ok");
+</script>
+</body>
+</html>
