@@ -595,7 +595,11 @@ const state = {
   scenario: null,
   orders: [],
   nextId: 21,
+  apiMode: false,
 };
+
+let _pollTimer    = null;
+let _lastLogIdx   = 0;
 
 // ── Relógio ───────────────────────────────────────────────────────────────────
 setInterval(() => {
@@ -922,110 +926,228 @@ function setBtns(dis) {
   );
 }
 
-function cenarioFalha() {
+// ── Infraestrutura de execução real via API ───────────────────────────────────
+
+async function tryRunScenario(key, demoFallback) {
   if (state.scenario) return;
-  state.scenario = "falha";
-  setBtns(true);
-  state.regions["eu-west-1"].status = "failed";
-  state.regions["eu-west-1"].errors = 100;
+  try {
+    const res = await fetch(`${API}/api/run/${key}`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 409) { showBanner(body.error || "Outro cenário em execução.", "warn"); return; }
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    // Backend disponível: modo real
+    state.apiMode = true;
+    state.scenario = key;
+    _lastLogIdx = 0;
+    setBtns(true);
+    _setVisualForScenario(key);
+    _pollTimer = setInterval(_pollStatus, 2000);
+  } catch (e) {
+    if (e instanceof TypeError) {
+      // Backend offline → simulação visual
+      state.apiMode = false;
+      demoFallback();
+    } else {
+      showBanner(`Erro ao iniciar cenário: ${e.message}`, "err");
+    }
+  }
+}
+
+function _setVisualForScenario(key) {
+  if (key === "region") {
+    state.regions["eu-west-1"].status = "failed";
+    state.regions["eu-west-1"].errors = 99;
+    renderRegions(); renderReplic(); updateGlobalChip();
+    showBanner("CENÁRIO A (REAL) — Script em execução na AWS: removendo réplica eu-west-1, gravando durante partição e medindo convergência pós-recovery.", "err");
+    log("Script 03_fault_region.py iniciado — testando disponibilidade real da AWS", "warn");
+  } else if (key === "throttle") {
+    state.regions["sa-east-1"].status = "degraded";
+    renderRegions(); renderReplic(); updateGlobalChip();
+    showBanner("CENÁRIO B (REAL) — Script em execução na AWS: convertendo para 1 WCU, rajada sem retry e com retry adaptativo.", "warn");
+    log("Script 04_fault_throttling.py iniciado — testando throttling real na AWS", "warn");
+  } else if (key === "conflict") {
+    showBanner("CENÁRIO C (REAL) — Script em execução na AWS: escritas simultâneas em us-east-1 e eu-west-1, medindo convergência LWW.", "warn");
+    log("Script 05_fault_conflict.py iniciado — testando LWW real na AWS", "warn");
+  }
+}
+
+async function _pollStatus() {
+  try {
+    const res  = await fetch(`${API}/api/run/status`);
+    const data = await res.json();
+
+    // Append novas linhas de log
+    if (Array.isArray(data.logs) && data.logs.length > _lastLogIdx) {
+      data.logs.slice(_lastLogIdx).forEach(line => {
+        const tipo = /erro|error|✗|falh/i.test(line) ? "err"
+                   : /warn|⚠|throttl|degraded/i.test(line) ? "warn" : "ok";
+        log(line, tipo);
+      });
+      _lastLogIdx = data.logs.length;
+    }
+
+    if (!data.running) {
+      // Cenário terminou
+      clearInterval(_pollTimer); _pollTimer = null;
+      state.scenario = null; setBtns(false); closeBanner();
+      if (data.result) _processResult(data.result, data.exit_code === 0);
+      // Atualiza dados reais
+      carregarStatus(); carregarMetricas(); carregarPedidos();
+    }
+  } catch (_) { /* não interrompe o polling em erros de rede */ }
+}
+
+function _processResult(result, success) {
+  const c = result.cenario || "";
+
+  if (c === "A_fault_region") {
+    const dispon = result.disponibilidade_pct ?? "?";
+    const conv   = result.convergencia || {};
+    state.regions["eu-west-1"].status = "active";
+    state.regions["eu-west-1"].errors = 0;
+    renderRegions(); renderReplic(); updateGlobalChip();
+    const convTxt = conv.convergiu ? `${conv.elapsed_ms}ms` : "NÃO ATINGIDA";
+    log(`Disponibilidade durante partição: ${dispon}%`, dispon === 100 ? "ok" : "err");
+    log(`Convergência pós-recovery: ${convTxt}`, conv.convergiu ? "ok" : "err");
+    showBanner(`Cenário A — Disponibilidade: ${dispon}% | Convergência: ${convTxt}`, success ? "info" : "err");
+  }
+
+  if (c === "B_throttling") {
+    const sem = result.sem_retry  || {};
+    const com = result.com_retry  || {};
+    state.regions["sa-east-1"].status   = "active";
+    state.regions["sa-east-1"].throttled = sem.throttled || 0;
+    state.regions["sa-east-1"].errors   = 0;
+    renderRegions(); renderReplic(); updateGlobalChip();
+    log(`Sem retry: ${sem.taxa_throttle_pct}% throttled em ${sem.elapsed_s}s`, "warn");
+    log(`Com retry: ${com.taxa_sucesso_pct}% sucesso em ${com.elapsed_s}s`, "ok");
+    const fator = sem.elapsed_s > 0 ? (com.elapsed_s / sem.elapsed_s).toFixed(1) : "?";
+    showBanner(`Cenário B — Throttle s/ retry: ${sem.taxa_throttle_pct}% | C/ retry: ${com.taxa_sucesso_pct}% (${fator}× mais lento)`, "info");
+  }
+
+  if (c === "C_conflict_lww") {
+    const rodadas = result.rodadas || [];
+    const ps = result.latencia_convergencia_ms || {};
+    const ultima = rodadas.filter(r => r.convergiu).pop() || rodadas[rodadas.length - 1] || {};
+    log(`LWW: ${result.convergencia_rate} rodadas convergiram`, "ok");
+    log(`Latência p50=${ps.p50}ms p90=${ps.p90}ms`, "ok");
+
+    // Mostra dialog com dados reais
+    const escritas = ultima.escritas || {};
+    const usLat = (escritas["us-east-1"] || {}).latencia_ms || "?";
+    const euLat = (escritas["eu-west-1"] || {}).latencia_ms || "?";
+
+    conflictItem = {
+      pedido_id: ultima.pedido_id || crypto.randomUUID(),
+      criado_em: new Date().toISOString(),
+      produto: "LWW Real", cliente: "DynamoDB Test",
+      valor: "0.00", status: "conflito",
+      origem_regiao: "us/eu", conflito: true,
+    };
+    state.orders.unshift(conflictItem);
+    renderOrders(conflictItem.pedido_id);
+
+    document.getElementById("conf-id").textContent  = (ultima.pedido_id || "").substring(0,16) + "…";
+    document.getElementById("cv-us-s").textContent  = `versao_us (${usLat}ms)`;
+    document.getElementById("cv-us-v").textContent  = "escrita simultânea via thread";
+    document.getElementById("cv-us-t").textContent  = "t ≈ 0ms";
+    document.getElementById("cv-eu-s").textContent  = `versao_eu (${euLat}ms)`;
+    document.getElementById("cv-eu-v").textContent  = "escrita simultânea via thread";
+    document.getElementById("cv-eu-t").textContent  = ultima.elapsed_ms ? `convergência: ${ultima.elapsed_ms}ms` : "—";
+    document.getElementById("conflict-overlay").classList.add("open");
+
+    showBanner(`Cenário C — ${result.convergencia_rate} rodadas | p50=${ps.p50}ms | vencedor: ${ultima.valor_final || "?"}`, "info");
+  }
+}
+
+// ── Demo fallbacks (sem backend) ─────────────────────────────────────────────
+
+function _demoFalha() {
+  state.scenario = "falha"; setBtns(true);
+  state.regions["eu-west-1"].status = "failed"; state.regions["eu-west-1"].errors = 100;
   renderRegions(); renderReplic(); updateGlobalChip();
-  showBanner("CENÁRIO A — Réplica eu-west-1 offline. Sistema continua operacional em sa-east-1 e us-east-1 (topologia ativa-ativa).", "err");
-  log("Réplica eu-west-1 removida — falha de região simulada", "err");
+  showBanner("CENÁRIO A (DEMO) — Simulação visual. Para teste real, inicie server.py.", "warn");
+  log("eu-west-1 offline — simulação local (sem chamadas AWS)", "warn");
   state.orders.filter(o => o.origem_regiao === "eu-west-1").forEach(o => { o._prev = o.status; o.status = "falha"; });
   renderOrders();
-  setTimeout(() => { state.regions["eu-west-1"].status = "degraded"; renderRegions(); renderReplic(); log("eu-west-1 restaurando — recriando réplica…","warn"); }, 8000);
+  setTimeout(() => { state.regions["eu-west-1"].status = "degraded"; renderRegions(); renderReplic(); log("eu-west-1 restaurando…","warn"); }, 8000);
   setTimeout(() => {
     state.orders.filter(o => o.status === "falha").forEach(o => { o.status = o._prev || "enviado"; delete o._prev; });
     state.regions["eu-west-1"].status = "active"; state.regions["eu-west-1"].errors = 0;
     renderRegions(); renderReplic(); renderOrders(); updateGlobalChip(); closeBanner();
     state.scenario = null; setBtns(false);
-    log("eu-west-1 ACTIVE — dados replicados após recovery","ok");
+    log("eu-west-1 ACTIVE (demo) — recovery simulado","ok");
   }, 16000);
 }
 
-function cenarioThrottle() {
-  if (state.scenario) return;
-  state.scenario = "throttle";
-  setBtns(true);
+function _demoThrottle() {
+  state.scenario = "throttle"; setBtns(true);
   state.regions["sa-east-1"].status = "degraded";
   renderRegions(); renderReplic(); updateGlobalChip();
-  showBanner("CENÁRIO B — Throttling em sa-east-1: ProvisionedThroughputExceededException. Escritas com exponential backoff (boto3 retry automático).", "warn");
-  log("Throttling ativo em sa-east-1 — 1 WCU provisioned","err");
+  showBanner("CENÁRIO B (DEMO) — Simulação visual. Para teste real, inicie server.py.", "warn");
+  log("Throttling simulado em sa-east-1 (sem chamadas AWS)", "warn");
   let i = 0;
   const iv = setInterval(() => {
     if (i >= 6) { clearInterval(iv); return; }
-    const o = {
-      pedido_id: crypto.randomUUID(),
-      criado_em: new Date().toISOString(),
-      produto: PRODS[i % PRODS.length],
-      cliente: CLNTS[(i+3) % CLNTS.length],
-      valor: (50 + i*12).toFixed(2),
-      status: "throttled",
-      origem_regiao: "sa-east-1",
-    };
-    state.orders.unshift(o);
-    log(`PutItem throttled → ${o.pedido_id.substring(0,8)} (retry ${i+1}/6)`, "warn");
-    renderOrders(o.pedido_id);
-    i++;
+    const o = { pedido_id: crypto.randomUUID(), criado_em: new Date().toISOString(), produto: PRODS[i%PRODS.length], cliente: CLNTS[(i+3)%CLNTS.length], valor: (50+i*12).toFixed(2), status: "throttled", origem_regiao: "sa-east-1" };
+    state.orders.unshift(o); log(`[DEMO] PutItem throttled → ${o.pedido_id.substring(0,8)}`, "warn"); renderOrders(o.pedido_id); i++;
   }, 700);
   setTimeout(() => {
-    state.orders.filter(o => o.status === "throttled").forEach(o => { o.status = "pendente"; });
+    state.orders.filter(o => o.status === "throttled").forEach(o => o.status = "pendente");
     state.regions["sa-east-1"].status = "active"; state.regions["sa-east-1"].errors = 0;
     renderRegions(); renderReplic(); renderOrders(); updateGlobalChip(); closeBanner();
     state.scenario = null; setBtns(false);
-    log("PAY_PER_REQUEST restaurado — fila liberada","ok");
+    log("PAY_PER_REQUEST restaurado (demo)","ok");
   }, 12000);
 }
 
-let conflictItem = null;
-function cenarioConflito() {
-  if (state.scenario) return;
-  state.scenario = "conflito";
-  setBtns(true);
-  const id = crypto.randomUUID();
-  const tsUs = new Date().toISOString();
-  conflictItem = {
-    pedido_id: id, criado_em: tsUs,
-    produto: "Notebook Pro", cliente: "Conflito Test",
-    valor: "499.00", status: "conflito", origem_regiao: "us/eu", conflito: true,
-  };
-  state.orders.unshift(conflictItem);
-  renderOrders(id);
-  showBanner(`CENÁRIO C — Conflito de escrita em ${id.substring(0,8)} — escritas simultâneas em us-east-1 e eu-west-1.`, "warn");
-  log(`Conflito detectado: ${id.substring(0,8)} gravado em us-east-1 e eu-west-1 simultaneamente`, "warn");
+function _demoConflito() {
+  state.scenario = "conflito"; setBtns(true);
+  const id = crypto.randomUUID(); const tsUs = new Date().toISOString();
+  conflictItem = { pedido_id: id, criado_em: tsUs, produto: "Notebook Pro", cliente: "Conflito Test", valor: "499.00", status: "conflito", origem_regiao: "us/eu", conflito: true };
+  state.orders.unshift(conflictItem); renderOrders(id);
+  showBanner(`CENÁRIO C (DEMO) — Simulação visual. Para teste real, inicie server.py.`, "warn");
+  log(`[DEMO] Conflito simulado: ${id.substring(0,8)}`, "warn");
   setTimeout(() => {
     const tsEu = new Date().toISOString();
     document.getElementById("conf-id").textContent = id.substring(0,8) + "…";
     document.getElementById("cv-us-s").textContent = "processando";
-    document.getElementById("cv-us-v").textContent = "499.00";
+    document.getElementById("cv-us-v").textContent = "499.00 (demo)";
     document.getElementById("cv-us-t").textContent = tsUs.substring(11,23) + "Z";
     document.getElementById("cv-eu-s").textContent = "enviado";
-    document.getElementById("cv-eu-v").textContent = "499.00";
+    document.getElementById("cv-eu-v").textContent = "499.00 (demo)";
     document.getElementById("cv-eu-t").textContent = tsEu.substring(11,23) + "Z (+100ms)";
     document.getElementById("conflict-overlay").classList.add("open");
   }, 1200);
 }
 
+// ── Funções públicas chamadas pelos botões ────────────────────────────────────
+
+function cenarioFalha()    { tryRunScenario("region",   _demoFalha);    }
+function cenarioThrottle() { tryRunScenario("throttle", _demoThrottle); }
+function cenarioConflito() { tryRunScenario("conflict", _demoConflito); }
+
+let conflictItem = null;
 function fecharConflito(aplicar) {
   document.getElementById("conflict-overlay").classList.remove("open");
   if (aplicar && conflictItem) {
-    conflictItem.status = "enviado";
-    conflictItem.origem_regiao = "eu-west-1";
-    conflictItem.conflito = false;
-    log("LWW aplicado — versão eu-west-1 prevaleceu em todas as réplicas","ok");
-    log("Convergência atingida: item consistente nas 3 regiões","ok");
+    conflictItem.status = "enviado"; conflictItem.origem_regiao = "eu-west-1"; conflictItem.conflito = false;
+    log("LWW aplicado — versão vencedora consistente nas 3 regiões", "ok");
   }
-  closeBanner(); state.scenario = null; setBtns(false);
+  if (!state.apiMode) { closeBanner(); state.scenario = null; setBtns(false); }
   renderOrders();
 }
 
 function recuperar() {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
   state.orders.forEach(o => {
     if (["falha","throttled","conflito"].includes(o.status)) o.status = "pendente";
     o.conflito = false;
   });
   REGIOES.forEach(r => { state.regions[r].status = "active"; state.regions[r].errors = 0; });
-  state.scenario = null; setBtns(false);
+  state.scenario = null; state.apiMode = false; setBtns(false);
   renderRegions(); renderReplic(); renderOrders(); updateGlobalChip(); closeBanner();
   document.getElementById("conflict-overlay").classList.remove("open");
   log("Sistema recuperado — todas as réplicas ACTIVE","ok");

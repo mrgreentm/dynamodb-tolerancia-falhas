@@ -1,10 +1,16 @@
 """
 Backend para o dashboard de pedidos DynamoDB.
-Serve métricas do CloudWatch e operações CRUD na tabela.
+Serve métricas do CloudWatch, operações CRUD na tabela e execução dos
+cenários de fault tolerance (run em background thread).
 """
+import re
+import sys
 import uuid
+import threading
+import subprocess
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import boto3
 from botocore.exceptions import ClientError
@@ -197,6 +203,96 @@ def delete_order(pedido_id):
         return jsonify({"deleted": pedido_id}), 200
     except ClientError as e:
         return jsonify({"error": e.response["Error"]["Message"]}), 500
+
+
+# ── Execução de cenários de fault tolerance ───────────────────────────────────
+
+SCRIPTS_DIR  = Path(__file__).parent / "scripts"
+RESULTS_DIR  = Path(__file__).parent / "results"
+_ANSI        = re.compile(r"\x1b\[[0-9;]*[mGKH]")
+_scenario_lock = threading.Lock()
+
+_scenario: dict = {
+    "running":   None,   # "region" | "throttle" | "conflict" | "recovery" | None
+    "logs":      [],
+    "result":    None,
+    "started":   None,
+    "exit_code": None,
+}
+
+_SCRIPT_MAP = {
+    "region":   "03_fault_region.py",
+    "throttle": "04_fault_throttling.py",
+    "conflict": "05_fault_conflict.py",
+    "recovery": "06_validate_recovery.py",
+    "seed":     "02_seed_data.py",
+}
+
+_RESULT_MAP = {
+    "region":   "03_fault_region.json",
+    "throttle": "04_fault_throttling.json",
+    "conflict": "05_fault_conflict.json",
+    "recovery": "06_validate_recovery.json",
+}
+
+
+def _exec_scenario(key: str, script: str):
+    import json as _json
+    proc = subprocess.Popen(
+        [sys.executable, "-u", str(SCRIPTS_DIR / script)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+        cwd=str(SCRIPTS_DIR),
+    )
+    for raw in proc.stdout:
+        line = _ANSI.sub("", raw).rstrip()
+        if line:
+            _scenario["logs"].append(line)
+            if len(_scenario["logs"]) > 400:
+                _scenario["logs"] = _scenario["logs"][-400:]
+    proc.wait()
+    _scenario["exit_code"] = proc.returncode
+
+    rf = _RESULT_MAP.get(key)
+    if rf:
+        path = RESULTS_DIR / rf
+        if path.exists():
+            try:
+                _scenario["result"] = _json.loads(path.read_text())
+            except Exception:
+                pass
+
+    _scenario["running"] = None
+
+
+@app.post("/api/run/<key>")
+def run_scenario(key):
+    if key not in _SCRIPT_MAP:
+        return jsonify({"error": "cenário desconhecido"}), 400
+    with _scenario_lock:
+        if _scenario["running"]:
+            return jsonify({"error": f"cenário '{_scenario['running']}' em execução"}), 409
+        _scenario.update({
+            "running":   key,
+            "logs":      [f"Iniciando {key} → {_SCRIPT_MAP[key]}"],
+            "result":    None,
+            "started":   ts_utc(),
+            "exit_code": None,
+        })
+    threading.Thread(target=_exec_scenario, args=(key, _SCRIPT_MAP[key]), daemon=True).start()
+    return jsonify({"started": key}), 202
+
+
+@app.get("/api/run/status")
+def run_status():
+    return jsonify({
+        "running":   _scenario["running"],
+        "started":   _scenario["started"],
+        "exit_code": _scenario["exit_code"],
+        "logs":      _scenario["logs"][-100:],
+        "result":    _scenario["result"],
+    })
 
 
 if __name__ == "__main__":
