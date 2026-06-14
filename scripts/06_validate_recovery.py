@@ -1,108 +1,137 @@
 """
-Fase 4 — Monitoramento e validação de recovery.
+Health Check — Validação pós-cenários.
 
-Verifica o estado de saúde da tabela em todas as regiões:
-- Contagem de itens e status por região
-- Ativação e status do PITR
-- Medição de latência de replicação entre regiões
-- Exportação de relatório JSON em results/
+Verifica o estado global da tabela:
+  - Status e contagem de itens por região
+  - Status do PITR (Point-in-Time Recovery)
+  - Latência de replicação entre regiões (com percentis)
 """
 import uuid
 import time
 from dotenv import load_dotenv
+from rich.panel import Panel
+from rich.table import Table
 from utils import (
-    REGIOES, get_client, get_table,
-    status_tabela, salvar_resultado, ts_utc,
+    console, REGIOES, get_client, get_table,
+    status_tabela, salvar_resultado, ts_utc, percentis,
 )
 
 load_dotenv()
 
 TABELA = "Pedidos"
+N_AMOSTRAS_LATENCIA = 5
 
 
-def contar_itens_por_regiao() -> list[dict]:
-    print("\n=== Contagem de itens por região ===")
+def verificar_regioes() -> list:
+    console.print("\n[bold]▶ Status das regiões[/]")
     resultados = []
+    tabela = Table()
+    tabela.add_column("Região")
+    tabela.add_column("Status")
+    tabela.add_column("Itens (aprox.)")
+    tabela.add_column("Réplicas")
+
     for regiao in REGIOES:
         info = status_tabela(regiao)
-        print(f"  {regiao}: {info.get('itens', 'N/A')} itens | status: {info['status']}")
+        ok = info["status"] == "ACTIVE"
+        status_str = f"[green]{info['status']}[/]" if ok else f"[red]{info['status']}[/]"
+        replicas = ", ".join(f"{r['regiao']}({r['status']})" for r in info.get("replicas", []))
+        tabela.add_row(regiao, status_str, str(info.get("itens", "N/A")), replicas or "—")
         resultados.append({"regiao": regiao, **info})
+
+    console.print(tabela)
     return resultados
 
 
-def ativar_pitr():
-    print("\n[AÇÃO] Ativando PITR em todas as regiões...")
-    for regiao in REGIOES:
-        try:
-            get_client(regiao).update_continuous_backups(
-                TableName=TABELA,
-                PointInTimeRecoverySpecification={"PointInTimeRecoveryEnabled": True},
-            )
-            print(f"  {regiao}: PITR ativado.")
-        except Exception as e:
-            print(f"  {regiao}: {e}")
-
-
-def verificar_pitr() -> list[dict]:
-    print("\n=== Status do PITR por região ===")
+def verificar_pitr() -> list:
+    console.print("\n[bold]▶ Point-in-Time Recovery (PITR)[/]")
     resultados = []
+    tabela = Table()
+    tabela.add_column("Região")
+    tabela.add_column("PITR")
+    tabela.add_column("Janela de restauração")
+
     for regiao in REGIOES:
         try:
             resp = get_client(regiao).describe_continuous_backups(TableName=TABELA)
             pitr = resp["ContinuousBackupsDescription"]["PointInTimeRecoveryDescription"]
-            status = pitr["PointInTimeRecoveryStatus"]
+            ativo = pitr["PointInTimeRecoveryStatus"] == "ENABLED"
             mais_cedo = pitr.get("EarliestRestorableDateTime", "N/A")
             mais_recente = pitr.get("LatestRestorableDateTime", "N/A")
-            print(f"  {regiao}: PITR={status} | janela: {mais_cedo} → {mais_recente}")
-            resultados.append({"regiao": regiao, "pitr_status": status,
-                                "earliest": str(mais_cedo), "latest": str(mais_recente)})
+            status_str = "[green]ENABLED[/]" if ativo else "[red]DISABLED[/]"
+            tabela.add_row(regiao, status_str, f"{mais_cedo} → {mais_recente}")
+            resultados.append({
+                "regiao": regiao, "pitr": ativo,
+                "earliest": str(mais_cedo), "latest": str(mais_recente),
+            })
         except Exception as e:
-            print(f"  {regiao}: {e}")
-            resultados.append({"regiao": regiao, "pitr_status": "ERRO", "detalhe": str(e)})
+            tabela.add_row(regiao, "[red]ERRO[/]", str(e))
+            resultados.append({"regiao": regiao, "pitr": False, "detalhe": str(e)})
+
+    console.print(tabela)
     return resultados
 
 
-def medir_latencia_replicacao() -> list[dict]:
-    print("\n=== Latência de replicação ===")
-    item_id = str(uuid.uuid4())
-    ts = ts_utc()
+def medir_latencia_replicacao() -> list:
+    """
+    Grava N_AMOSTRAS_LATENCIA itens em us-east-1 e mede o tempo até
+    cada um aparecer em sa-east-1 e eu-west-1 (polling a cada 50ms).
+    """
+    console.print(f"\n[bold]▶ Latência de replicação[/] ({N_AMOSTRAS_LATENCIA} amostras, polling 50ms)")
+    destinos = ["sa-east-1", "eu-west-1"]
+    tempos: dict = {d: [] for d in destinos}
 
-    get_table("us-east-1").put_item(Item={
-        "pedido_id": item_id,
-        "criado_em": ts,
-        "marker": "latencia_test",
-    })
-    inicio = time.time()
+    for amostra in range(N_AMOSTRAS_LATENCIA):
+        pedido_id = f"LAT-{uuid.uuid4().hex[:8].upper()}"
+        ts = ts_utc()
+        get_table("us-east-1").put_item(Item={"pedido_id": pedido_id, "criado_em": ts, "marker": "latencia"})
+        inicio = time.perf_counter()
+
+        pendentes = set(destinos)
+        while pendentes:
+            elapsed = time.perf_counter() - inicio
+            if elapsed > 10:
+                for d in pendentes:
+                    tempos[d].append(None)
+                break
+            for dest in list(pendentes):
+                resp = get_table(dest).get_item(
+                    Key={"pedido_id": pedido_id, "criado_em": ts},
+                    ConsistentRead=False,
+                )
+                if resp.get("Item"):
+                    tempos[dest].append(round(elapsed * 1000))
+                    pendentes.discard(dest)
+            if pendentes:
+                time.sleep(0.05)
+
+        console.print(f"  Amostra {amostra + 1}: {', '.join(f'{d}={tempos[d][-1]}ms' for d in destinos)}")
+
+    tabela = Table(title="Latência us-east-1 → destino")
+    tabela.add_column("Destino")
+    tabela.add_column("p50 (ms)")
+    tabela.add_column("p90 (ms)")
+    tabela.add_column("p95 (ms)")
 
     resultados = []
-    for regiao in ["sa-east-1", "eu-west-1"]:
-        encontrado = False
-        for _ in range(60):
-            resp = get_table(regiao).get_item(
-                Key={"pedido_id": item_id, "criado_em": ts},
-                ConsistentRead=False,
-            )
-            if resp.get("Item"):
-                latencia_ms = round((time.time() - inicio) * 1000)
-                print(f"  us-east-1 → {regiao}: {latencia_ms}ms")
-                resultados.append({"origem": "us-east-1", "destino": regiao, "latencia_ms": latencia_ms})
-                encontrado = True
-                break
-            time.sleep(0.1)
-        if not encontrado:
-            print(f"  {regiao}: item não replicado em 6s")
-            resultados.append({"origem": "us-east-1", "destino": regiao, "latencia_ms": None})
+    for dest in destinos:
+        vals = [v for v in tempos[dest] if v is not None]
+        ps = percentis(vals) if vals else {}
+        tabela.add_row(dest, str(ps.get("p50")), str(ps.get("p90")), str(ps.get("p95")))
+        resultados.append({"origem": "us-east-1", "destino": dest, "latencias_ms": tempos[dest], "percentis": ps})
+
+    console.print(tabela)
     return resultados
 
 
 if __name__ == "__main__":
-    relatorio = {"inicio": ts_utc()}
+    console.print(Panel("[bold]Health Check — Validação Pós-Cenários[/]", expand=False))
 
-    relatorio["regioes"] = contar_itens_por_regiao()
-    ativar_pitr()
-    relatorio["pitr"] = verificar_pitr()
+    relatorio = {"inicio": ts_utc()}
+    relatorio["regioes"]             = verificar_regioes()
+    relatorio["pitr"]                = verificar_pitr()
     relatorio["latencia_replicacao"] = medir_latencia_replicacao()
     relatorio["fim"] = ts_utc()
 
     caminho = salvar_resultado("06_validate_recovery.json", relatorio)
-    print(f"\nRelatório salvo em: {caminho}")
+    console.print(f"\n[green]✓[/] Relatório salvo em: {caminho}")

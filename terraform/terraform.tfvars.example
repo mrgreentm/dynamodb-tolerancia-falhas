@@ -1,0 +1,9 @@
+aws_access_key = "AKIA..."
+aws_secret_key = "seu_secret_key"
+table_name     = "Pedidos"
+
+tags = {
+  Project     = "sistemas-distribuidos"
+  Environment = "lab"
+  Reference   = "USENIX-ATC-2022"
+}
