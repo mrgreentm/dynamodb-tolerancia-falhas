@@ -1,92 +1,154 @@
 """
-Cenário C — Conflito de escrita (last-write-wins).
+Cenário C — Conflito de Escrita / Last-Write-Wins (USENIX ATC 2022, §3.4)
 
-Grava o mesmo item em duas regiões com intervalo de 100ms entre as escritas.
-Aguarda a convergência e verifica em todas as regiões qual valor prevaleceu.
+Demonstra a resolução de conflitos do DynamoDB Global Tables.
+Escritas simultâneas para o mesmo item em regiões distintas são resolvidas
+pelo timestamp interno do servidor (não pelo clock da aplicação): a escrita
+com o timestamp mais recente prevalece em todas as réplicas após convergência.
 
-O DynamoDB Global Tables usa last-write-wins baseado no timestamp do servidor
-(não no timestamp da aplicação), portanto o valor gravado por último deve
-prevalecer em todas as réplicas após convergência.
+Fluxo por rodada:
+  1. Grava "versao_us" em us-east-1 e "versao_eu" em eu-west-1 simultaneamente (threads)
+  2. Faz polling em todas as 3 regiões a cada 100ms
+  3. Registra o tempo até todas as regiões exibirem o mesmo valor (convergência)
 
-Ref: paper USENIX ATC 2022, §3.4 — Conflict Resolution.
+Métricas:
+  - Taxa de convergência (esperado: 100% das rodadas)
+  - Tempo de convergência p50 / p90 (esperado: < 2000 ms)
+  - Valor vencedor por rodada (não-determinístico — depende de qual chegou por último)
 """
+import uuid
 import time
-from datetime import datetime, timezone
+import threading
 from dotenv import load_dotenv
-from utils import get_table, salvar_resultado, ts_utc
+from rich.panel import Panel
+from rich.table import Table
+from utils import (
+    console, get_table, salvar_resultado, ts_utc, percentis,
+)
 
 load_dotenv()
 
 TABELA = "Pedidos"
-REGIOES = ["us-east-1", "sa-east-1", "eu-west-1"]
-ITEM_KEY = {
-    "pedido_id": "CONFLITO-001",
-    "criado_em": "2026-06-07T12:00:00+00:00",
-}
-ESPERA_CONVERGENCIA = 10  # segundos
+REGIOES = ["sa-east-1", "us-east-1", "eu-west-1"]
+N_RODADAS = 5
+TIMEOUT_S = 30       # segundos máximos aguardando convergência
+POLL_MS   = 100      # intervalo de polling em ms
 
 
-def gravar_versao(regiao: str, valor: str) -> str:
-    ts = ts_utc()
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _gravar(regiao: str, pedido_id: str, criado_em: str, valor: str, saida: dict) -> None:
+    t0 = time.perf_counter()
     get_table(regiao).put_item(Item={
-        **ITEM_KEY,
-        "valor": valor,
-        "ts_aplicacao": ts,
+        "pedido_id":     pedido_id,
+        "criado_em":     criado_em,
+        "valor":         valor,
+        "ts_aplicacao":  ts_utc(),
         "origem_regiao": regiao,
     })
-    print(f"  [{regiao}] gravou '{valor}' às {ts}")
-    return ts
+    saida[regiao] = {"valor": valor, "latencia_ms": round((time.perf_counter() - t0) * 1000, 1)}
 
 
-def ler_versao(regiao: str) -> dict:
-    resp = get_table(regiao).get_item(Key=ITEM_KEY, ConsistentRead=False)
-    item = resp.get("Item", {})
-    return {
-        "regiao": regiao,
-        "valor": item.get("valor"),
-        "ts_aplicacao": item.get("ts_aplicacao"),
-        "origem_regiao": item.get("origem_regiao"),
-    }
+def _polling_convergencia(pedido_id: str, criado_em: str) -> dict:
+    """Retorna quando todas as regiões leem o mesmo valor (ou timeout)."""
+    inicio = time.perf_counter()
+    while True:
+        elapsed = time.perf_counter() - inicio
+        if elapsed > TIMEOUT_S:
+            return {"convergiu": False, "elapsed_ms": round(elapsed * 1000)}
+
+        leituras = {}
+        for regiao in REGIOES:
+            resp = get_table(regiao).get_item(
+                Key={"pedido_id": pedido_id, "criado_em": criado_em},
+                ConsistentRead=False,
+            )
+            leituras[regiao] = resp.get("Item", {}).get("valor")
+
+        valores_presentes = {v for v in leituras.values() if v is not None}
+        todas_leram = all(v is not None for v in leituras.values())
+
+        if todas_leram and len(valores_presentes) == 1:
+            return {
+                "convergiu":   True,
+                "elapsed_ms":  round((time.perf_counter() - inicio) * 1000),
+                "valor_final": next(iter(valores_presentes)),
+                "leituras":    leituras,
+            }
+
+        time.sleep(POLL_MS / 1000)
 
 
-def simular_conflito() -> dict:
-    print("[CONFLITO] Gravando versões conflitantes em regiões distintas...")
-    ts_us = gravar_versao("us-east-1", "versao_us")
-    time.sleep(0.1)  # 100ms para garantir ordering observável
-    ts_eu = gravar_versao("eu-west-1", "versao_eu")
+# ── Rodada individual ─────────────────────────────────────────────────────────
 
-    print(f"\n[AGUARDAR] Convergência ({ESPERA_CONVERGENCIA}s)...")
-    time.sleep(ESPERA_CONVERGENCIA)
+def rodada(n: int) -> dict:
+    pedido_id = f"CONFLICT-{n:02d}-{uuid.uuid4().hex[:6].upper()}"
+    criado_em = ts_utc()
 
-    print("\n[RESULTADO] Leitura eventual em todas as regiões:")
-    leituras = []
-    for regiao in REGIOES:
-        leitura = ler_versao(regiao)
-        leituras.append(leitura)
-        print(f"  [{regiao}] valor={leitura['valor']} | ts={leitura['ts_aplicacao']}")
+    escritas: dict = {}
+    t_us = threading.Thread(target=_gravar, args=("us-east-1", pedido_id, criado_em, "versao_us", escritas))
+    t_eu = threading.Thread(target=_gravar, args=("eu-west-1", pedido_id, criado_em, "versao_eu", escritas))
 
-    valores = {l["valor"] for l in leituras if l["valor"]}
-    convergiu = len(valores) == 1
-    valor_final = next(iter(valores)) if valores else None
+    t_us.start()
+    t_eu.start()
+    t_us.join()
+    t_eu.join()
 
-    print(f"\nConvergência: {'SIM' if convergiu else 'NÃO (ainda divergindo)'}")
-    print(f"Valor prevalente: {valor_final}")
-    print("Esperado: 'versao_eu' (escrita mais recente = last-write-wins)")
+    lat_us = escritas.get("us-east-1", {}).get("latencia_ms", "?")
+    lat_eu = escritas.get("eu-west-1", {}).get("latencia_ms", "?")
+    console.print(f"  Rodada {n}: us={lat_us}ms eu={lat_eu}ms", end=" | ")
 
-    return {
-        "ts_us": ts_us,
-        "ts_eu": ts_eu,
-        "leituras": leituras,
-        "convergiu": convergiu,
-        "valor_final": valor_final,
-        "resultado": "PASSOU" if valor_final == "versao_eu" else "DIVERGINDO",
-    }
+    conv = _polling_convergencia(pedido_id, criado_em)
 
+    if conv["convergiu"]:
+        console.print(f"convergência em [yellow]{conv['elapsed_ms']} ms[/] → [bold]{conv['valor_final']}[/]")
+    else:
+        console.print(f"[red]SEM convergência em {TIMEOUT_S}s[/]")
+
+    return {"rodada": n, "pedido_id": pedido_id, "escritas": escritas, **conv}
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    resultado = {"inicio": ts_utc()}
-    dados = simular_conflito()
-    resultado.update(dados)
+    console.print(Panel(
+        "[bold]Cenário C — Conflito de Escrita (Last-Write-Wins)[/]\nRef: USENIX ATC 2022, §3.4",
+        expand=False,
+    ))
+
+    resultado = {"cenario": "C_conflict_lww", "inicio": ts_utc(), "rodadas": []}
+
+    console.print(f"\nExecutando {N_RODADAS} rodadas de conflito simultâneo (poll a cada {POLL_MS}ms)...\n")
+    for i in range(1, N_RODADAS + 1):
+        resultado["rodadas"].append(rodada(i))
+
+    # Estatísticas
+    convergidas = [r for r in resultado["rodadas"] if r.get("convergiu")]
+    tempos = [r["elapsed_ms"] for r in convergidas]
+    ps = percentis(tempos) if tempos else {}
+
+    vencedores = {}
+    for r in convergidas:
+        v = r.get("valor_final", "?")
+        vencedores[v] = vencedores.get(v, 0) + 1
+
+    resultado["convergencia_rate"] = f"{len(convergidas)}/{N_RODADAS}"
+    resultado["latencia_convergencia_ms"] = ps
+    resultado["vencedores"] = vencedores
     resultado["fim"] = ts_utc()
+
     salvar_resultado("05_fault_conflict.json", resultado)
-    print(f"\nResultado: {resultado['resultado']}")
+
+    tabela = Table(title="Resumo — Conflito LWW")
+    tabela.add_column("Métrica")
+    tabela.add_column("Valor")
+    tabela.add_row("Rodadas com convergência", resultado["convergencia_rate"])
+    tabela.add_row("Tempo p50",  f"{ps.get('p50')} ms")
+    tabela.add_row("Tempo p90",  f"{ps.get('p90')} ms")
+    for valor, cnt in vencedores.items():
+        tabela.add_row(f"Vencedor: {valor}", str(cnt))
+    console.print(tabela)
+
+    passou = len(convergidas) == N_RODADAS
+    console.print(f"\n[bold]Resultado:[/] {'[green]PASSOU[/]' if passou else '[red]FALHOU[/]'}")
+    console.print("  Nota: o valor vencedor é não-determinístico (depende de latência de rede interna da AWS).")
