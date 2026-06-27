@@ -40,10 +40,6 @@ resource "aws_dynamodb_table" "pedidos" {
   hash_key     = "pedido_id"
   range_key    = "criado_em"
 
-  # ── Atributos indexados ──────────────────────────────────────────────────────
-  # Apenas atributos usados como chave em GSI/LSI precisam ser declarados aqui.
-  # Atributos livres (produto, valor, etc.) não aparecem nesta seção.
-
   attribute {
     name = "pedido_id"
     type = "S"
@@ -65,9 +61,6 @@ resource "aws_dynamodb_table" "pedidos" {
     type = "S"
   }
 
-  # ── GSI 1: busca por status → útil para listar pedidos pendentes/enviados ───
-  # Padrão: GSI(status) + sort por criado_em
-  # Exemplo: "todos os pedidos com status=pendente, ordenados por data"
   global_secondary_index {
     name            = "status-criado_em-index"
     hash_key        = "status"
@@ -75,9 +68,6 @@ resource "aws_dynamodb_table" "pedidos" {
     projection_type = "ALL"
   }
 
-  # ── GSI 2: busca por cliente → histórico de pedidos de um cliente ───────────
-  # Padrão: GSI(cliente) + sort por criado_em
-  # Exemplo: "todos os pedidos do cliente 'Ana Costa'"
   global_secondary_index {
     name            = "cliente-criado_em-index"
     hash_key        = "cliente"
@@ -85,17 +75,12 @@ resource "aws_dynamodb_table" "pedidos" {
     projection_type = "ALL"
   }
 
-  # ── GSI 3: busca por região de origem → análise de origem dos pedidos ───────
-  # Padrão: GSI(origem_regiao) + sort por criado_em
-  # Exemplo: "pedidos originados em eu-west-1 na última hora"
   global_secondary_index {
     name            = "origem_regiao-criado_em-index"
     hash_key        = "origem_regiao"
     range_key       = "criado_em"
     projection_type = "ALL"
   }
-
-  # ── Streams e replicação ─────────────────────────────────────────────────────
 
   stream_enabled   = true
   stream_view_type = "NEW_AND_OLD_IMAGES"

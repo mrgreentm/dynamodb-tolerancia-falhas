@@ -1,20 +1,23 @@
 """
 Cenário B — Throttling / Admission Control (USENIX ATC 2022, §4)
 
-Demonstra o comportamento do DynamoDB sob carga acima da capacidade provisionada.
+Pré-requisito: tabela deve estar em PROVISIONED 1 WCU via Terraform.
+  cd terraform && terraform apply -var-file=scenarios/cenario_b.tfvars
 
 Fluxo:
-  1. Converte a tabela para PROVISIONED 1 WCU (capacidade mínima)
-  2. Fase 1 — sem retry: 100 escritas concorrentes, sem retry automático
+  1. Fase 1 — sem retry: 100 escritas concorrentes
      → evidencia throttling (ProvisionedThroughputExceededException)
-  3. Fase 2 — com retry: repete com exponential backoff adaptativo
-     → boto3 absorve os throttles; todas as escritas completam com sucesso
-  4. Restaura PAY_PER_REQUEST
+  2. Fase 2 — com retry: repete com exponential backoff adaptativo
+     → boto3 absorve os throttles; todas as escritas completam
 
 Métricas:
   - Taxa de throttling sem retry (esperado: 70–95%)
   - Taxa de sucesso com retry   (esperado: 100%)
-  - Tempo total de cada fase e latência por percentil
+  - Overhead de latência do backoff
+
+Pós-execução:
+  Restaure PAY_PER_REQUEST:
+    cd terraform && terraform apply
 """
 import time
 import boto3
@@ -37,7 +40,17 @@ N_TOTAL = 100
 N_WORKERS = 20
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+def _verificar_estado() -> None:
+    """Confirma que a tabela está em PROVISIONED antes de medir."""
+    resp = get_client(REGIAO).describe_table(TableName=TABELA)
+    modo = resp["Table"].get("BillingModeSummary", {}).get("BillingMode", "PAY_PER_REQUEST")
+    wcu = resp["Table"].get("ProvisionedThroughput", {}).get("WriteCapacityUnits", 0)
+    if modo != "PROVISIONED" or wcu > 1:
+        console.print(f"\n[yellow]⚠ AVISO:[/] Tabela está em modo {modo} (WCU={wcu}).")
+        console.print("  Execute primeiro: [bold]cd terraform && terraform apply -var-file=scenarios/cenario_b.tfvars[/]")
+        raise SystemExit(1)
+    console.print(f"  [green]✓[/] Tabela em PROVISIONED {wcu} WCU — throttling esperado.")
+
 
 def _tabela_com_config(cfg):
     return boto3.resource("dynamodb", region_name=REGIAO, config=cfg).Table(TABELA)
@@ -92,63 +105,44 @@ def _executar_fase(tabela, prefixo: str, label: str) -> dict:
     console.print(tabela_rich)
 
     return {
-        "total":            N_TOTAL,
-        "sucessos":         len(sucessos),
-        "throttled":        len(throttled),
-        "outros_erros":     len(outros),
-        "taxa_sucesso_pct": round(taxa_sucesso, 1),
-        "taxa_throttle_pct":round(taxa_throttle, 1),
-        "elapsed_s":        elapsed,
-        "latencia_ms":      ps,
+        "total":             N_TOTAL,
+        "sucessos":          len(sucessos),
+        "throttled":         len(throttled),
+        "outros_erros":      len(outros),
+        "taxa_sucesso_pct":  round(taxa_sucesso, 1),
+        "taxa_throttle_pct": round(taxa_throttle, 1),
+        "elapsed_s":         elapsed,
+        "latencia_ms":       ps,
     }
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     console.print(Panel(
-        "[bold]Cenário B — Throttling / Admission Control[/]\nRef: USENIX ATC 2022, §4",
+        "[bold]Cenário B — Throttling / Admission Control[/]\nRef: USENIX ATC 2022, §4\n"
+        "[dim]Infraestrutura gerenciada por Terraform (cenario_b.tfvars)[/]",
         expand=False,
     ))
 
+    _verificar_estado()
+
     resultado = {"cenario": "B_throttling", "inicio": ts_utc(), "n_escritas": N_TOTAL}
 
-    # Converter para PROVISIONED mínimo
-    console.print(f"\n[bold]▶ CONFIG[/] Convertendo {TABELA} para PROVISIONED 1 WCU / 1 RCU...")
-    get_client(REGIAO).update_table(
-        TableName=TABELA,
-        BillingMode="PROVISIONED",
-        ProvisionedThroughput={"ReadCapacityUnits": 1, "WriteCapacityUnits": 1},
-    )
-    aguardar_tabela_ativa(REGIAO)
-    resultado["provisioned_em"] = ts_utc()
-    console.print("  [green]✓[/] PROVISIONED 1 WCU ativo.")
+    # Terraform apply pode levar minutos, então burst capacity provavelmente já esgotou.
+    # Sleep curto como margem de segurança.
+    console.print("  Aguardando 5s (margem de segurança para burst capacity)...")
+    time.sleep(5)
 
-    # Esgota o burst capacity inicial antes de medir
-    console.print("  Aguardando 10s para esgotamento do burst capacity...")
-    time.sleep(10)
-
-    # Fase 1: sem retry
     console.print(f"\n[bold yellow]▶ FASE 1[/] Sem retry — {N_TOTAL} escritas concorrentes ({N_WORKERS} workers)")
     cfg_sem = botocore.config.Config(retries={"max_attempts": 1})
     resultado["sem_retry"] = _executar_fase(_tabela_com_config(cfg_sem), "T1", "Fase 1 — Sem Retry")
 
-    # Pequena pausa para separar as fases
     time.sleep(3)
 
-    # Fase 2: com retry adaptativo
     console.print(f"\n[bold blue]▶ FASE 2[/] Com retry adaptativo — {N_TOTAL} escritas concorrentes ({N_WORKERS} workers)")
     cfg_com = botocore.config.Config(retries={"max_attempts": 10, "mode": "adaptive"})
     resultado["com_retry"] = _executar_fase(_tabela_com_config(cfg_com), "T2", "Fase 2 — Com Retry Adaptativo")
 
-    # Restaurar PAY_PER_REQUEST
-    console.print(f"\n[bold]▶ RESTORE[/] Restaurando PAY_PER_REQUEST...")
-    get_client(REGIAO).update_table(TableName=TABELA, BillingMode="PAY_PER_REQUEST")
-    aguardar_tabela_ativa(REGIAO)
-    resultado["restaurado_em"] = ts_utc()
-    console.print("  [green]✓[/] PAY_PER_REQUEST restaurado.")
     resultado["fim"] = ts_utc()
-
     salvar_resultado("04_fault_throttling.json", resultado)
 
     sem = resultado["sem_retry"]
@@ -159,3 +153,6 @@ if __name__ == "__main__":
     console.print(f"  • Com retry  → sucesso:  {com['taxa_sucesso_pct']}%  em {com['elapsed_s']}s")
     fator = round(com["elapsed_s"] / sem["elapsed_s"], 1) if sem["elapsed_s"] > 0 else "N/A"
     console.print(f"  • Overhead do backoff:   {fator}× mais lento")
+
+    console.print("\n[bold yellow]Próximo passo:[/]")
+    console.print("  Restaure PAY_PER_REQUEST: [bold]cd terraform && terraform apply[/]")

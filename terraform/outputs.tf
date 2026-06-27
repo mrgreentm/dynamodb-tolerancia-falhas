@@ -11,7 +11,8 @@ output "stream_arn" {
 }
 
 output "replicas" {
-  value = [for r in aws_dynamodb_table.pedidos.replica : r.region_name]
+  value       = [for r in aws_dynamodb_table.pedidos.replica : r.region_name]
+  description = "Regiões com réplica ativa"
 }
 
 output "global_secondary_indexes" {
