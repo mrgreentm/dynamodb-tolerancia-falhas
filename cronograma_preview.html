@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="UTF-8">
+<title>Cronograma DynamoDB Lab</title>
+<style>
+  body { font-family: Calibri, Arial, sans-serif; padding: 20px; background: #f0f0f0; }
+  h2 { color: #1F4E79; margin-bottom: 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+  td, th { border: 1px solid #BBBBBB; padding: 6px 8px; vertical-align: middle; }
+  tr:hover td { filter: brightness(0.96); }
+  .legend-section { margin-top: 32px; display: flex; gap: 40px; }
+  .legend-box { display: flex; flex-direction: column; gap: 6px; }
+  .legend-box h4 { margin: 0 0 4px 0; color: #333; font-size: 13px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .legend-swatch { width: 20px; height: 20px; border: 1px solid #999; border-radius: 3px; }
+</style>
+</head>
+<body>
+<h2>Cronograma — DynamoDB Fault Tolerance Lab (USENIX ATC 2022)</h2>
+<table>
+  <tr>
+    <th style="background:#1F4E79;color:#FFFFFF;font-weight:bold;">Período</th>
+    <th style="background:#1F4E79;color:#FFFFFF;font-weight:bold;">Fase / Marco</th>
+    <th style="background:#1F4E79;color:#FFFFFF;font-weight:bold;">Responsável</th>
+    <th style="background:#1F4E79;color:#FFFFFF;font-weight:bold;">Atividade macro</th>
+    <th style="background:#1F4E79;color:#FFFFFF;font-weight:bold;">Entregável / evidência</th>
+    <th style="background:#1F4E79;color:#FFFFFF;font-weight:bold;">Status</th>
+    <th style="background:#1F4E79;color:#FFFFFF;font-weight:bold;">Prioridade</th>
+  </tr>
+  <tr>
+    <td rowspan="4" style="background:#D6E4F0;color:#000000;">06/05 a 12/05</td>
+    <td rowspan="4" style="background:#D6E4F0;color:#000000;font-weight:bold;">Fase 1: Entendimento do Paper e Planejamento</td>
+    <td style="background:#D6E4F0;color:#000000;">Pedro</td>
+    <td style="background:#D6E4F0;color:#000000;">Definir escopo, cronograma e responsabilidades do lab</td>
+    <td style="background:#D6E4F0;color:#000000;">Escopo definido, cronograma inicial e divisão de tarefas registrados.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#70AD47;color:#FFFFFF;font-weight:bold;">Baixa</td>
+  </tr>
+  <tr>
+    <td style="background:#D6E4F0;color:#000000;">Másio</td>
+    <td style="background:#D6E4F0;color:#000000;">Estudar paper DynamoDB (USENIX ATC 2022) — §3, §4, §5</td>
+    <td style="background:#D6E4F0;color:#000000;">Resumo dos conceitos CAP, LWW, admission control e replicação assíncrona.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#D6E4F0;color:#000000;">Diego</td>
+    <td style="background:#D6E4F0;color:#000000;">Definir stack técnica: Terraform, Python, Flask, Dashboard HTML</td>
+    <td style="background:#D6E4F0;color:#000000;">Stack definida, estrutura de pastas planejada e repositório criado.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#70AD47;color:#FFFFFF;font-weight:bold;">Baixa</td>
+  </tr>
+  <tr>
+    <td style="background:#D6E4F0;color:#000000;">João</td>
+    <td style="background:#D6E4F0;color:#000000;">Mapear requisitos, riscos e roteiro inicial da demonstração</td>
+    <td style="background:#D6E4F0;color:#000000;">Lista de requisitos, riscos técnicos AWS e roteiro da demo definidos.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td rowspan="4" style="background:#D5E8D4;color:#000000;">13/05 a 19/05</td>
+    <td rowspan="4" style="background:#D5E8D4;color:#000000;font-weight:bold;">Fase 2: Infraestrutura Base AWS e Terraform</td>
+    <td style="background:#D5E8D4;color:#000000;">Pedro</td>
+    <td style="background:#D5E8D4;color:#000000;">Documentar arquitetura e decisões de design do lab</td>
+    <td style="background:#D5E8D4;color:#000000;">Diagrama de arquitetura (3 regiões) e decisões técnicas registrados.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#D5E8D4;color:#000000;">Másio</td>
+    <td style="background:#D5E8D4;color:#000000;">Criar terraform/main.tf: Global Table Pedidos em 3 regiões, GSIs e PITR</td>
+    <td style="background:#D5E8D4;color:#000000;">Tabela Pedidos ACTIVE em sa-east-1, us-east-1 e eu-west-1; PITR ativado.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FF4C4C;color:#FFFFFF;font-weight:bold;">Alta</td>
+  </tr>
+  <tr>
+    <td style="background:#D5E8D4;color:#000000;">Diego</td>
+    <td style="background:#D5E8D4;color:#000000;">Criar 01_setup_table.py e 02_seed_data.py</td>
+    <td style="background:#D5E8D4;color:#000000;">50 pedidos de teste inseridos e validação de 3 regiões ACTIVE.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#D5E8D4;color:#000000;">João</td>
+    <td style="background:#D5E8D4;color:#000000;">Configurar credenciais AWS, IAM e terraform.tfvars</td>
+    <td style="background:#D5E8D4;color:#000000;">terraform apply concluído sem erros; credenciais validadas nas 3 regiões.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td rowspan="4" style="background:#FFE6CC;color:#000000;">20/05 a 26/05</td>
+    <td rowspan="4" style="background:#FFE6CC;color:#000000;font-weight:bold;">Fase 3: Cenário A — Falha de Região</td>
+    <td style="background:#FFE6CC;color:#000000;">Pedro</td>
+    <td style="background:#FFE6CC;color:#000000;">Documentar metodologia do Cenário A e conexão com §5 do paper</td>
+    <td style="background:#FFE6CC;color:#000000;">Metodologia de remoção/restauro de réplica descrita; métricas esperadas definidas.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#FFE6CC;color:#000000;">Másio</td>
+    <td style="background:#FFE6CC;color:#000000;">Implementar scenarios/cenario_a/main.tf (remove réplica → grava → restaura → convergência)</td>
+    <td style="background:#FFE6CC;color:#000000;">Terraform executa ciclo completo: 100% de escritas durante partição e convergência < 30 s.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FF4C4C;color:#FFFFFF;font-weight:bold;">Alta</td>
+  </tr>
+  <tr>
+    <td style="background:#FFE6CC;color:#000000;">Diego</td>
+    <td style="background:#FFE6CC;color:#000000;">Integrar Cenário A ao dashboard e ao server.py</td>
+    <td style="background:#FFE6CC;color:#000000;">Botão 'Cenário A' no dashboard conectado ao endpoint real; resultados exibidos.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#FFE6CC;color:#000000;">João</td>
+    <td style="background:#FFE6CC;color:#000000;">Testar e validar Cenário A ponta a ponta</td>
+    <td style="background:#FFE6CC;color:#000000;">Disponibilidade 100% confirmada; tempo de convergência medido e registrado em results/.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td rowspan="4" style="background:#FFF2CC;color:#000000;">27/05 a 02/06</td>
+    <td rowspan="4" style="background:#FFF2CC;color:#000000;font-weight:bold;">Fase 4: Cenário B — Throttling e Admission Control</td>
+    <td style="background:#FFF2CC;color:#000000;">Pedro</td>
+    <td style="background:#FFF2CC;color:#000000;">Documentar Cenário B e conceito de admission control (§4 do paper)</td>
+    <td style="background:#FFF2CC;color:#000000;">WCU, ProvisionedThroughputExceededException e backoff exponencial explicados.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#FFF2CC;color:#000000;">Másio</td>
+    <td style="background:#FFF2CC;color:#000000;">Implementar scenarios/cenario_b/main.tf (1 WCU → 100 escritas → retry → restaura)</td>
+    <td style="background:#FFF2CC;color:#000000;">Fase 1 (sem retry): 70–95% throttled. Fase 2 (backoff): 100% de sucesso.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FF4C4C;color:#FFFFFF;font-weight:bold;">Alta</td>
+  </tr>
+  <tr>
+    <td style="background:#FFF2CC;color:#000000;">Diego</td>
+    <td style="background:#FFF2CC;color:#000000;">Integrar Cenário B ao dashboard com métricas de throttling</td>
+    <td style="background:#FFF2CC;color:#000000;">Taxa de throttle e sucesso exibidas em tempo real no dashboard.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#FFF2CC;color:#000000;">João</td>
+    <td style="background:#FFF2CC;color:#000000;">Testar e validar Cenário B nas duas fases</td>
+    <td style="background:#FFF2CC;color:#000000;">Resultados das fases sem/com retry comparados e salvos em results/.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td rowspan="4" style="background:#E1D5E7;color:#000000;">03/06 a 09/06</td>
+    <td rowspan="4" style="background:#E1D5E7;color:#000000;font-weight:bold;">Fase 5: Cenário C — Conflito LWW</td>
+    <td style="background:#E1D5E7;color:#000000;">Pedro</td>
+    <td style="background:#E1D5E7;color:#000000;">Documentar resolução de conflitos LWW e §3.4 do paper</td>
+    <td style="background:#E1D5E7;color:#000000;">Mecanismo LWW, timestamp interno AWS e não-determinismo documentados.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#E1D5E7;color:#000000;">Másio</td>
+    <td style="background:#E1D5E7;color:#000000;">Implementar scenarios/cenario_c/main.tf (escritas paralelas 2 regiões → polling convergência)</td>
+    <td style="background:#E1D5E7;color:#000000;">5/5 rodadas convergem; tempo de convergência p50 < 2000 ms.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FF4C4C;color:#FFFFFF;font-weight:bold;">Alta</td>
+  </tr>
+  <tr>
+    <td style="background:#E1D5E7;color:#000000;">Diego</td>
+    <td style="background:#E1D5E7;color:#000000;">Integrar Cenário C ao dashboard com estatísticas de convergência</td>
+    <td style="background:#E1D5E7;color:#000000;">Tempos de convergência por rodada exibidos no dashboard.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#E1D5E7;color:#000000;">João</td>
+    <td style="background:#E1D5E7;color:#000000;">Testar Cenário C e validar não-determinismo do vencedor LWW</td>
+    <td style="background:#E1D5E7;color:#000000;">Vencedor (us/eu) registrado por rodada; convergência confirmada em todas.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td rowspan="4" style="background:#DAE8FC;color:#000000;">10/06 a 16/06</td>
+    <td rowspan="4" style="background:#DAE8FC;color:#000000;font-weight:bold;">Fase 6: Backend Flask e Dashboard em Tempo Real</td>
+    <td style="background:#DAE8FC;color:#000000;">Pedro</td>
+    <td style="background:#DAE8FC;color:#000000;">Documentar API REST do server.py e integração com CloudWatch</td>
+    <td style="background:#DAE8FC;color:#000000;">Endpoints da API e delay do CloudWatch (~5 min) documentados.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#DAE8FC;color:#000000;">Másio</td>
+    <td style="background:#DAE8FC;color:#000000;">Implementar server.py: Flask + Boto3 + métricas CloudWatch</td>
+    <td style="background:#DAE8FC;color:#000000;">server.py funcional em localhost:8080 com endpoints para cada cenário.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FF4C4C;color:#FFFFFF;font-weight:bold;">Alta</td>
+  </tr>
+  <tr>
+    <td style="background:#DAE8FC;color:#000000;">Diego</td>
+    <td style="background:#DAE8FC;color:#000000;">Construir dashboard.html: status das 3 regiões, métricas e botões de cenário</td>
+    <td style="background:#DAE8FC;color:#000000;">dashboard.html atualiza em tempo real; botões A/B/C conectados ao backend.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FF4C4C;color:#FFFFFF;font-weight:bold;">Alta</td>
+  </tr>
+  <tr>
+    <td style="background:#DAE8FC;color:#000000;">João</td>
+    <td style="background:#DAE8FC;color:#000000;">Testar integração dashboard + server.py + DynamoDB + CloudWatch</td>
+    <td style="background:#DAE8FC;color:#000000;">Todos os cenários executáveis via dashboard; métricas exibidas corretamente.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td rowspan="4" style="background:#D5E8D4;color:#000000;">17/06 a 23/06</td>
+    <td rowspan="4" style="background:#D5E8D4;color:#000000;font-weight:bold;">Fase 7: Testes Finais, Ajustes e Evidências</td>
+    <td style="background:#D5E8D4;color:#000000;">Pedro</td>
+    <td style="background:#D5E8D4;color:#000000;">Consolidar evidências e atualizar README.md e INTRODUCAO.md</td>
+    <td style="background:#D5E8D4;color:#000000;">README.md e INTRODUCAO.md atualizados; evidências organizadas.</td>
+    <td style="background:#FFEB9C;color:#000000;font-weight:bold;">Em andamento</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#D5E8D4;color:#000000;">Másio</td>
+    <td style="background:#D5E8D4;color:#000000;">Revisar e refatorar módulos Terraform (idempotência, tratamento de erros)</td>
+    <td style="background:#D5E8D4;color:#000000;">Todos os cenários executam sem erros em terraform apply repetido.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#D5E8D4;color:#000000;">Diego</td>
+    <td style="background:#D5E8D4;color:#000000;">Ajustar dashboard para demonstração ao vivo</td>
+    <td style="background:#D5E8D4;color:#000000;">UI polida, resultados de backup em results/ prontos como plano B.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FF4C4C;color:#FFFFFF;font-weight:bold;">Alta</td>
+  </tr>
+  <tr>
+    <td style="background:#D5E8D4;color:#000000;">João</td>
+    <td style="background:#D5E8D4;color:#000000;">Executar testes finais ponta a ponta e registrar evidências</td>
+    <td style="background:#D5E8D4;color:#000000;">JSON de resultados e screenshots/vídeos organizados para entrega.</td>
+    <td style="background:#FFEB9C;color:#000000;font-weight:bold;">Em andamento</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td rowspan="4" style="background:#F8CECC;color:#000000;">24/06 a 28/06</td>
+    <td rowspan="4" style="background:#F8CECC;color:#000000;font-weight:bold;">Fase 8: Documentação e Apresentação Final</td>
+    <td style="background:#F8CECC;color:#000000;">Pedro</td>
+    <td style="background:#F8CECC;color:#000000;">Finalizar APRESENTACAO.md e preparar roteiro de demo</td>
+    <td style="background:#F8CECC;color:#000000;">Roteiro de 30 min finalizado; timing validado e conteúdo para slides pronto.</td>
+    <td style="background:#FFEB9C;color:#000000;font-weight:bold;">Em andamento</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#F8CECC;color:#000000;">Másio</td>
+    <td style="background:#F8CECC;color:#000000;">Preparar explicação técnica da infraestrutura Terraform/AWS</td>
+    <td style="background:#F8CECC;color:#000000;">Resumo técnico da configuração cloud pronto para Q&A na apresentação.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#F8CECC;color:#000000;">Diego</td>
+    <td style="background:#F8CECC;color:#000000;">Preparar sequência visual da demo no dashboard</td>
+    <td style="background:#F8CECC;color:#000000;">Sequência da demo definida; telas finais revisadas e prontas.</td>
+    <td style="background:#C6EFCE;color:#000000;font-weight:bold;">Concluído</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#F8CECC;color:#000000;">João</td>
+    <td style="background:#F8CECC;color:#000000;">Ensaiar apresentação e validar checklist de entrega final</td>
+    <td style="background:#F8CECC;color:#000000;">Roteiro ensaiado, checklist validado e plano B com resultados pré-salvos preparado.</td>
+    <td style="background:#FFC7CE;color:#000000;font-weight:bold;">Não iniciado</td>
+    <td style="background:#FFD966;color:#FFFFFF;font-weight:bold;">Média</td>
+  </tr>
+  <tr>
+    <td style="background:#FFFFFF;color:#000000;"></td>
+    <td style="background:#FFFFFF;color:#000000;"></td>
+    <td style="background:#FFFFFF;color:#000000;"></td>
+    <td style="background:#FFFFFF;color:#000000;"></td>
+    <td style="background:#FFFFFF;color:#000000;"></td>
+    <td style="background:#FFFFFF;color:#000000;"></td>
+    <td style="background:#FFFFFF;color:#000000;"></td>
+  </tr>
+</table>
+
+<div class="legend-section">
+  <div class="legend-box">
+    <h4>Status</h4>
+    <div class="legend-item"><div class="legend-swatch" style="background:#C6EFCE"></div>Concluído</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#FFEB9C"></div>Em andamento</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#FFC7CE"></div>Não iniciado</div>
+  </div>
+  <div class="legend-box">
+    <h4>Prioridade</h4>
+    <div class="legend-item"><div class="legend-swatch" style="background:#FF4C4C"></div>Alta</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#FFD966"></div>Média</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:#70AD47"></div>Baixa</div>
+  </div>
+</div>
+</body></html>
